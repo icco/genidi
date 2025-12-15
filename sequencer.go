@@ -14,6 +14,7 @@ import (
 const (
 	numSteps    = 16
 	numChannels = 4
+	ticksPerQuarterNote = 960 // Standard MIDI resolution
 )
 
 // sequencerModel manages the MIDI sequencer state
@@ -83,12 +84,12 @@ func (s *sequencerModel) loadMIDI(path string) error {
 
 	// Parse tracks to extract note data
 	// Calculate ticks per step (one bar = 4 beats = 16 steps)
-	ticksPerStep := uint32(960 / 4) // 240 ticks per step
+	ticksPerStep := uint32(ticksPerQuarterNote / 4) // 240 ticks per step
 
 	tracks := rd.Tracks
-	// Skip track 0 (tempo track), process remaining tracks
+	// Skip track 0 (tempo track), process remaining tracks as channels
 	for trackIdx := 1; trackIdx < len(tracks) && trackIdx <= numChannels; trackIdx++ {
-		ch := trackIdx - 1
+		ch := trackIdx - 1 // Track 1 maps to channel 0, etc.
 		track := tracks[trackIdx]
 
 		// Parse messages in the track
@@ -119,10 +120,10 @@ func (s *sequencerModel) saveMIDI() error {
 
 	// Create a new SMF file
 	sm := smf.New()
-	sm.TimeFormat = smf.MetricTicks(960)
+	sm.TimeFormat = smf.MetricTicks(ticksPerQuarterNote)
 
 	// Calculate ticks per step (one bar = 4 beats = 16 steps)
-	ticksPerStep := uint32(960 / 4) // 240 ticks per step
+	ticksPerStep := uint32(ticksPerQuarterNote / 4) // 240 ticks per step
 
 	// Track 0: Tempo track
 	var track0 smf.Track
@@ -150,7 +151,13 @@ func (s *sequencerModel) saveMIDI() error {
 				lastTick += ticksPerStep - 1
 			}
 		}
-		track.Close(uint32(numSteps)*ticksPerStep - lastTick)
+		// Close track - ensure we don't have negative delta
+		endTick := uint32(numSteps) * ticksPerStep
+		if lastTick < endTick {
+			track.Close(endTick - lastTick)
+		} else {
+			track.Close(0)
+		}
 		if err := sm.Add(track); err != nil {
 			return fmt.Errorf("error adding track %d: %w", ch, err)
 		}

@@ -103,7 +103,9 @@ func (s *sequencerModel) saveMIDI() error {
 	track0.Add(0, smf.MetaMeter(4, 4))
 	track0.Add(0, smf.MetaTempo(float64(s.bpm)))
 	track0.Close(0)
-	sm.Add(track0)
+	if err := sm.Add(track0); err != nil {
+		return fmt.Errorf("error adding tempo track: %w", err)
+	}
 
 	// Create tracks for each channel
 	for ch := 0; ch < numChannels; ch++ {
@@ -111,15 +113,17 @@ func (s *sequencerModel) saveMIDI() error {
 
 		for step := 0; step < numSteps; step++ {
 			if s.steps[ch][step] {
-				pos := uint32(step) * ticksPerStep
+				pos := uint32(step) * ticksPerStep //nolint:gosec // step is bounded by numSteps constant
 				// Note on
-				track.Add(pos, midi.NoteOn(uint8(ch), uint8(s.notes[ch]), 100))
+				track.Add(pos, midi.NoteOn(uint8(ch), uint8(s.notes[ch]), 100)) //nolint:gosec // ch is bounded by numChannels constant
 				// Note off after one step
-				track.Add(ticksPerStep-1, midi.NoteOff(uint8(ch), uint8(s.notes[ch])))
+				track.Add(ticksPerStep-1, midi.NoteOff(uint8(ch), uint8(s.notes[ch]))) //nolint:gosec // ch is bounded by numChannels constant
 			}
 		}
 		track.Close(uint32(numSteps) * ticksPerStep)
-		sm.Add(track)
+		if err := sm.Add(track); err != nil {
+			return fmt.Errorf("error adding track %d: %w", ch, err)
+		}
 	}
 
 	// Write to file
@@ -261,9 +265,8 @@ func (m model) viewSequencer() string {
 
 		// Steps
 		for step := 0; step < numSteps; step++ {
-			cell := " "
-			
 			// Determine cell content
+			var cell string
 			if s.steps[ch][step] {
 				cell = "●"
 			} else {

@@ -29,7 +29,6 @@ type model struct {
 	sequencer   sequencerModel
 	width       int
 	height      int
-	err         error
 }
 
 // fileBrowserModel manages the file browser state

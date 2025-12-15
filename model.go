@@ -73,13 +73,13 @@ var (
 )
 
 func initialModel() model {
-	homeDir, err := os.UserHomeDir()
+	currentDir, err := os.Getwd()
 	if err != nil {
-		homeDir = "."
+		currentDir = "."
 	}
 
 	fb := fileBrowserModel{
-		currentDir: homeDir,
+		currentDir: currentDir,
 		cursor:     0,
 	}
 	fb.loadFiles()

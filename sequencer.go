@@ -21,7 +21,7 @@ type sequencerModel struct {
 	filePath    string
 	bpm         int
 	steps       [numChannels][numSteps]bool // Which steps are active
-	notes       [numChannels]int            // MIDI note number for each channel
+	notes       [numChannels][numSteps]int  // MIDI note number for each step
 	cursorX     int                         // Current step
 	cursorY     int                         // Current channel
 	isPlaying   bool
@@ -38,12 +38,11 @@ func (s *sequencerModel) createNewMIDI(path string) error {
 	s.currentStep = 0
 	s.message = "New MIDI file created"
 
-	// Initialize with default notes (C4, D4, E4, F4)
-	s.notes = [numChannels]int{60, 62, 64, 65}
-
-	// Clear all steps
+	// Initialize with default notes (C4, D4, E4, F4) for each step
+	defaultNotes := [numChannels]int{60, 62, 64, 65}
 	for i := 0; i < numChannels; i++ {
 		for j := 0; j < numSteps; j++ {
+			s.notes[i][j] = defaultNotes[i]
 			s.steps[i][j] = false
 		}
 	}
@@ -61,11 +60,10 @@ func (s *sequencerModel) loadMIDI(path string) error {
 	s.message = fmt.Sprintf("Loaded: %s", path)
 
 	// Initialize with default notes
-	s.notes = [numChannels]int{60, 62, 64, 65}
-
-	// Clear all steps
+	defaultNotes := [numChannels]int{60, 62, 64, 65}
 	for i := 0; i < numChannels; i++ {
 		for j := 0; j < numSteps; j++ {
+			s.notes[i][j] = defaultNotes[i]
 			s.steps[i][j] = false
 		}
 	}
@@ -81,6 +79,34 @@ func (s *sequencerModel) loadMIDI(path string) error {
 	tempoChanges := rd.TempoChanges()
 	if len(tempoChanges) > 0 {
 		s.bpm = int(tempoChanges[0].BPM)
+	}
+
+	// Parse tracks to extract note data
+	// Calculate ticks per step (one bar = 4 beats = 16 steps)
+	ticksPerStep := uint32(960 / 4) // 240 ticks per step
+
+	tracks := rd.Tracks
+	// Skip track 0 (tempo track), process remaining tracks
+	for trackIdx := 1; trackIdx < len(tracks) && trackIdx <= numChannels; trackIdx++ {
+		ch := trackIdx - 1
+		track := tracks[trackIdx]
+
+		// Parse messages in the track
+		var currentTick uint32
+		for _, msg := range track {
+			currentTick += msg.Delta
+
+			// Check if this is a note on message
+			var channel, key, velocity uint8
+			if msg.Message.GetNoteOn(&channel, &key, &velocity) {
+				// Calculate which step this note belongs to
+				step := int(currentTick / ticksPerStep)
+				if step < numSteps && velocity > 0 {
+					s.notes[ch][step] = int(key)
+					s.steps[ch][step] = true
+				}
+			}
+		}
 	}
 
 	return nil
@@ -110,17 +136,21 @@ func (s *sequencerModel) saveMIDI() error {
 	// Create tracks for each channel
 	for ch := 0; ch < numChannels; ch++ {
 		var track smf.Track
+		var lastTick uint32 = 0
 
 		for step := 0; step < numSteps; step++ {
 			if s.steps[ch][step] {
 				pos := uint32(step) * ticksPerStep //nolint:gosec // step is bounded by numSteps constant
+				delta := pos - lastTick
 				// Note on
-				track.Add(pos, midi.NoteOn(uint8(ch), uint8(s.notes[ch]), 100)) //nolint:gosec // ch is bounded by numChannels constant
+				track.Add(delta, midi.NoteOn(uint8(ch), uint8(s.notes[ch][step]), 100)) //nolint:gosec // ch is bounded by numChannels constant
+				lastTick = pos
 				// Note off after one step
-				track.Add(ticksPerStep-1, midi.NoteOff(uint8(ch), uint8(s.notes[ch]))) //nolint:gosec // ch is bounded by numChannels constant
+				track.Add(ticksPerStep-1, midi.NoteOff(uint8(ch), uint8(s.notes[ch][step]))) //nolint:gosec // ch is bounded by numChannels constant
+				lastTick += ticksPerStep - 1
 			}
 		}
-		track.Close(uint32(numSteps) * ticksPerStep)
+		track.Close(uint32(numSteps)*ticksPerStep - lastTick)
 		if err := sm.Add(track); err != nil {
 			return fmt.Errorf("error adding track %d: %w", ch, err)
 		}
@@ -179,17 +209,17 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "w":
-		// Increase note
-		if s.notes[s.cursorY] < 127 {
-			s.notes[s.cursorY]++
+		// Increase note for current step
+		if s.notes[s.cursorY][s.cursorX] < 127 {
+			s.notes[s.cursorY][s.cursorX]++
 			if err := s.saveMIDI(); err != nil {
 				s.message = fmt.Sprintf("Error saving: %v", err)
 			}
 		}
 	case "s":
-		// Decrease note
-		if s.notes[s.cursorY] > 0 {
-			s.notes[s.cursorY]--
+		// Decrease note for current step
+		if s.notes[s.cursorY][s.cursorX] > 0 {
+			s.notes[s.cursorY][s.cursorX]--
 			if err := s.saveMIDI(); err != nil {
 				s.message = fmt.Sprintf("Error saving: %v", err)
 			}
@@ -235,12 +265,8 @@ func (m model) viewSequencer() string {
 	clockBar := renderClockBar(s.bpm, s.isPlaying, s.currentStep)
 	b.WriteString(clockBar + "\n\n")
 
-	// Channel labels
-	channelStyle := lipgloss.NewStyle().Width(10).Align(lipgloss.Left)
-	b.WriteString(channelStyle.Render("Channel"))
-	b.WriteString(channelStyle.Render("Note"))
-	
-	// Step numbers
+	// Header row with proper spacing
+	b.WriteString("Channel  Note  ")
 	for i := 0; i < numSteps; i++ {
 		b.WriteString(fmt.Sprintf("%2d ", i+1))
 	}
@@ -248,22 +274,22 @@ func (m model) viewSequencer() string {
 
 	// Sequencer grid
 	for ch := 0; ch < numChannels; ch++ {
-		// Channel indicator
+		// Channel indicator (8 chars wide to match "Channel  ")
 		if ch == s.cursorY {
-			b.WriteString(selectedStyle.Render(fmt.Sprintf("Ch %d     ", ch+1)))
+			b.WriteString(selectedStyle.Render(fmt.Sprintf("Ch %-5d", ch+1)))
 		} else {
-			b.WriteString(fmt.Sprintf("Ch %d     ", ch+1))
+			b.WriteString(fmt.Sprintf("Ch %-5d", ch+1))
 		}
 
-		// Note display
-		noteName := midiNoteToName(s.notes[ch])
+		// Note display for current cursor position (5 chars wide to match "Note  ")
+		noteName := midiNoteToName(s.notes[ch][s.cursorX])
 		if ch == s.cursorY {
-			b.WriteString(selectedStyle.Render(fmt.Sprintf("%-4s ", noteName)))
+			b.WriteString(selectedStyle.Render(fmt.Sprintf("%-5s ", noteName)))
 		} else {
-			b.WriteString(fmt.Sprintf("%-4s ", noteName))
+			b.WriteString(fmt.Sprintf("%-5s ", noteName))
 		}
 
-		// Steps
+		// Steps (3 chars wide per step: " X ")
 		for step := 0; step < numSteps; step++ {
 			// Determine cell content
 			var cell string
@@ -303,7 +329,7 @@ func (m model) viewSequencer() string {
 		b.WriteString(errorStyle.Render(s.message) + "\n")
 	}
 
-	b.WriteString("\n" + helpStyle.Render("Navigation: ↑↓←→ or hjkl • Space: toggle step • w/s: change note"))
+	b.WriteString("\n" + helpStyle.Render("Navigation: ↑↓←→ or hjkl • Space: toggle step • w/s: change note (for current step)"))
 	b.WriteString("\n" + helpStyle.Render("+/-: tempo • p: play/stop • c: clear channel • q: back to files"))
 
 	return b.String()

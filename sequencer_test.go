@@ -1,13 +1,25 @@
 package main
 
 import (
-"fmt"
-"testing"
+	"fmt"
+	"os"
+	"testing"
 )
 
 func TestMIDILoadingSavingWithPerStepNotes(t *testing.T) {
 // Create a test MIDI file
 testPath := "test_midi/test_load.mid"
+
+// Ensure the test directory exists
+if err := os.MkdirAll("test_midi", 0750); err != nil {
+t.Fatalf("Error creating test directory: %v", err)
+}
+// Clean up after test
+defer func() {
+if err := os.RemoveAll("test_midi"); err != nil {
+t.Logf("Warning: failed to clean up test directory: %v", err)
+}
+}()
 
 // Create the sequencer model and create a new MIDI file with some steps active
 s := &sequencerModel{}

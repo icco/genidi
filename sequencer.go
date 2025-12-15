@@ -43,7 +43,7 @@ func (s *sequencerModel) createNewMIDI(path string) error {
 	defaultNotes := [numChannels]int{60, 62, 64, 65}
 	for i := 0; i < numChannels; i++ {
 		for j := 0; j < numSteps; j++ {
-			s.notes[i][j] = defaultNotes[i]
+			s.notes[i][j] = defaultNotes[i] //nolint:gosec // i is bounded by numChannels constant
 			s.steps[i][j] = false
 		}
 	}
@@ -64,7 +64,7 @@ func (s *sequencerModel) loadMIDI(path string) error {
 	defaultNotes := [numChannels]int{60, 62, 64, 65}
 	for i := 0; i < numChannels; i++ {
 		for j := 0; j < numSteps; j++ {
-			s.notes[i][j] = defaultNotes[i]
+			s.notes[i][j] = defaultNotes[i] //nolint:gosec // i is bounded by numChannels constant
 			s.steps[i][j] = false
 		}
 	}

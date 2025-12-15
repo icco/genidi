@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -18,14 +19,17 @@ const (
 	sequencerMode
 )
 
+// tickMsg is used for playback animation timing
+type tickMsg time.Time
+
 // Model represents the application state
 type model struct {
-	mode           viewMode
-	fileBrowser    fileBrowserModel
-	sequencer      sequencerModel
-	width          int
-	height         int
-	err            error
+	mode        viewMode
+	fileBrowser fileBrowserModel
+	sequencer   sequencerModel
+	width       int
+	height      int
+	err         error
 }
 
 // fileBrowserModel manages the file browser state
@@ -142,6 +146,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case tickMsg:
+		// Handle playback tick
+		if m.sequencer.isPlaying {
+			m.sequencer.currentStep = (m.sequencer.currentStep + 1) % numSteps
+			return m, tick()
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
@@ -150,6 +162,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				// Return to file browser from sequencer
 				m.mode = fileBrowserMode
+				m.sequencer.isPlaying = false
 				return m, nil
 			}
 		}

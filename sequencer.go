@@ -210,10 +210,9 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-type tickMsg time.Time
-
 func tick() tea.Cmd {
-	return tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+	// Tick faster for smoother visual feedback (60ms provides good balance)
+	return tea.Tick(time.Millisecond*60, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
@@ -228,7 +227,7 @@ func (m model) viewSequencer() string {
 	b.WriteString(fmt.Sprintf("File: %s\n", s.filePath))
 	b.WriteString(fmt.Sprintf("BPM: %d (use +/- to adjust)\n\n", s.bpm))
 
-	// Clock visualization with Harmonica spring animation
+	// Clock visualization
 	clockBar := renderClockBar(s.bpm, s.isPlaying, s.currentStep)
 	b.WriteString(clockBar + "\n\n")
 

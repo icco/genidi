@@ -710,10 +710,12 @@ func renderSignalVisualizer(s *sequencerModel) string {
 	if s.isPlaying {
 		x := s.currentStep * 4
 		// Draw a vertical line through all rows at the current step
-		for y := 0; y < graphHeight; y++ {
-			// Only draw playhead if the cell is empty or has a dot
-			if grid[y][x] == ' ' || grid[y][x] == '·' {
-				grid[y][x] = '▏'
+		if x >= 0 && x < graphWidth {
+			for y := 0; y < graphHeight; y++ {
+				// Only draw playhead if the cell is empty or has a dot
+				if grid[y][x] == ' ' || grid[y][x] == '·' {
+					grid[y][x] = '▏'
+				}
 			}
 		}
 	}
@@ -736,13 +738,14 @@ func renderSignalVisualizer(s *sequencerModel) string {
 			}
 
 			if !colored {
-				if char == ' ' {
+				switch char {
+				case ' ':
 					b.WriteString(" ")
-				} else if char == '▏' {
+				case '▏':
 					// Playhead indicator - bright white/cyan for visibility
 					playheadStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00FFFF"))
 					b.WriteString(playheadStyle.Render(string(char)))
-				} else {
+				default:
 					b.WriteString(helpStyle.Render(string(char)))
 				}
 			}

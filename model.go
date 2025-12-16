@@ -33,10 +33,11 @@ type model struct {
 
 // fileBrowserModel manages the file browser state
 type fileBrowserModel struct {
-	currentDir string
-	files      []fileInfo
-	cursor     int
-	message    string
+	currentDir   string
+	files        []fileInfo
+	cursor       int
+	message      string
+	viewportTop  int // First visible file index
 }
 
 type fileInfo struct {
@@ -125,12 +126,15 @@ func (fb *fileBrowserModel) loadFiles() {
 		}
 	}
 
-	// Reset cursor if out of bounds
+	// Reset cursor and viewport if out of bounds
 	if fb.cursor >= len(fb.files) && len(fb.files) > 0 {
 		fb.cursor = len(fb.files) - 1
 	}
 	if fb.cursor < 0 {
 		fb.cursor = 0
+	}
+	if fb.viewportTop > fb.cursor {
+		fb.viewportTop = fb.cursor
 	}
 }
 
@@ -210,10 +214,22 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if fb.cursor > 0 {
 			fb.cursor--
+			// Scroll up if cursor moves above viewport
+			if fb.cursor < fb.viewportTop {
+				fb.viewportTop = fb.cursor
+			}
 		}
 	case "down", "j":
 		if fb.cursor < len(fb.files)-1 {
 			fb.cursor++
+			// Scroll down if cursor moves below viewport
+			maxVisibleLines := m.height - 9
+			if maxVisibleLines < 5 {
+				maxVisibleLines = 5
+			}
+			if fb.cursor >= fb.viewportTop+maxVisibleLines {
+				fb.viewportTop = fb.cursor - maxVisibleLines + 1
+			}
 		}
 	case "enter":
 		if len(fb.files) == 0 {
@@ -224,6 +240,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if selected.isDir {
 			fb.currentDir = selected.path
 			fb.cursor = 0
+			fb.viewportTop = 0
 			fb.message = ""
 			fb.loadFiles()
 		} else {
@@ -255,6 +272,13 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				} else {
 					fb.message = fmt.Sprintf("Deleted %s", selected.name)
 					fb.loadFiles()
+					// Adjust viewport if needed after deletion
+					if fb.cursor >= len(fb.files) && len(fb.files) > 0 {
+						fb.cursor = len(fb.files) - 1
+					}
+					if fb.viewportTop > fb.cursor {
+						fb.viewportTop = fb.cursor
+					}
 				}
 			}
 		}
@@ -283,7 +307,23 @@ func (m model) viewFileBrowser() string {
 	if len(fb.files) == 0 {
 		s += "No MIDI files or directories found.\n"
 	} else {
-		for i, file := range fb.files {
+		// Calculate visible range based on terminal height
+		// Reserve space for: title(3), dir(1), blank(1), message(2), help(2) = 9 lines
+		maxVisibleLines := m.height - 9
+		if maxVisibleLines < 5 {
+			maxVisibleLines = 5 // Minimum visible lines
+		}
+
+		// Calculate viewport range
+		start := fb.viewportTop
+		end := start + maxVisibleLines
+		if end > len(fb.files) {
+			end = len(fb.files)
+		}
+
+		// Render only visible files
+		for i := start; i < end; i++ {
+			file := fb.files[i]
 			cursor := " "
 			if i == fb.cursor {
 				cursor = ">"
@@ -296,10 +336,12 @@ func (m model) viewFileBrowser() string {
 				name = midiStyle.Render(name)
 			}
 
+			// Format line consistently regardless of selection
+			line := fmt.Sprintf("%s %s", cursor, name)
 			if i == fb.cursor {
-				s += selectedStyle.Render(fmt.Sprintf("%s %s\n", cursor, name))
+				s += selectedStyle.Render(line) + "\n"
 			} else {
-				s += fmt.Sprintf("%s %s\n", cursor, name)
+				s += line + "\n"
 			}
 		}
 	}

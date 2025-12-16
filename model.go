@@ -21,9 +21,9 @@ const (
 
 // Key constants to avoid goconst linting issues
 const (
-	keyUp    = "up"
-	keyDown  = "down"
-	keyLeft  = "left"
+	keyUp   = "up"
+	keyDown = "down"
+	keyLeft = "left"
 	keyRight = "right"
 )
 
@@ -41,11 +41,11 @@ type model struct {
 
 // fileBrowserModel manages the file browser state
 type fileBrowserModel struct {
-	currentDir  string
-	files       []fileInfo
-	cursor      int
-	message     string
-	viewportTop int // First visible file index
+	currentDir   string
+	files        []fileInfo
+	cursor       int
+	message      string
+	viewportTop  int // First visible file index
 }
 
 type fileInfo struct {

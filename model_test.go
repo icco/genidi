@@ -100,8 +100,8 @@ func TestFileBrowserLoadFilesResetsViewport(t *testing.T) {
 	// Create a model
 	fb := &fileBrowserModel{
 		currentDir:  testDir,
-		cursor:      10, // Out of bounds
-		viewportTop: 5,  // Also out of bounds
+		cursor:      10,       // Out of bounds
+		viewportTop: 5,        // Also out of bounds
 	}
 
 	fb.loadFiles()

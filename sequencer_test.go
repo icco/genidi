@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/harmonica"
 )
 
 func TestMIDILoadingSavingWithPerStepNotes(t *testing.T) {
@@ -101,6 +103,9 @@ func TestSignalVisualizer(t *testing.T) {
 		currentStep: 0,
 	}
 
+	// Initialize spring for testing
+	s.visualizerSpring = harmonica.NewSpring(harmonica.FPS(60), 6.0, 0.5)
+
 	// Set up some notes across channels to test visualization
 	// Channel 0: ascending pattern
 	s.steps[0][0] = true
@@ -128,8 +133,8 @@ func TestSignalVisualizer(t *testing.T) {
 	s.notes[3][1] = 84 // C6
 	s.notes[3][9] = 96 // C7
 
-	// Render the signal visualizer
-	output := renderSignalVisualizer(s)
+	// Render the signal visualizer (pass pointer for animation state)
+	output := renderSignalVisualizer(&s)
 
 	// Basic validation: check that output contains expected elements
 	if output == "" {

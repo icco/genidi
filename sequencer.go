@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/harmonica"
 	"github.com/charmbracelet/lipgloss"
 	"gitlab.com/gomidi/midi/v2"
 	"gitlab.com/gomidi/midi/v2/drivers"
@@ -42,6 +43,11 @@ type sequencerModel struct {
 	outPort       drivers.Out                  // Currently open output port
 	sendFunc      func(msg midi.Message) error // Function to send MIDI
 	selectingPort bool                         // Whether we're in port selection mode
+
+	// Animation state for signal visualizer using Harmonica
+	visualizerValues     [numChannels][numSteps]float64 // Current animated values
+	visualizerVelocities [numChannels][numSteps]float64 // Spring velocities
+	visualizerSpring     harmonica.Spring               // Spring for smooth animations
 }
 
 func (s *sequencerModel) refreshMIDIPorts() {
@@ -131,12 +137,19 @@ func (s *sequencerModel) createNewMIDI(path string) error {
 	// Refresh available MIDI ports
 	s.refreshMIDIPorts()
 
+	// Initialize spring animation for smooth visualizer transitions
+	// FPS(60) sets 60 fps, 6.0 is angular frequency (speed), 0.5 is damping ratio (springiness)
+	s.visualizerSpring = harmonica.NewSpring(harmonica.FPS(60), 6.0, 0.5)
+
 	// Initialize with default notes (C4, D4, E4, F4) for each step
 	defaultNotes := [numChannels]int{60, 62, 64, 65}
 	for i := 0; i < numChannels; i++ {
 		for j := 0; j < numSteps; j++ {
 			s.notes[i][j] = defaultNotes[i] //nolint:gosec // i is bounded by numChannels constant
 			s.steps[i][j] = false
+			// Initialize animation values to 0 (inactive/baseline)
+			s.visualizerValues[i][j] = 0
+			s.visualizerVelocities[i][j] = 0
 		}
 	}
 
@@ -157,12 +170,18 @@ func (s *sequencerModel) loadMIDI(path string) error {
 	// Refresh available MIDI ports
 	s.refreshMIDIPorts()
 
+	// Initialize spring animation for smooth visualizer transitions
+	s.visualizerSpring = harmonica.NewSpring(harmonica.FPS(60), 6.0, 0.5)
+
 	// Initialize with default notes
 	defaultNotes := [numChannels]int{60, 62, 64, 65}
 	for i := 0; i < numChannels; i++ {
 		for j := 0; j < numSteps; j++ {
 			s.notes[i][j] = defaultNotes[i] //nolint:gosec // i is bounded by numChannels constant
 			s.steps[i][j] = false
+			// Initialize animation values to 0 (inactive/baseline)
+			s.visualizerValues[i][j] = 0
+			s.visualizerVelocities[i][j] = 0
 		}
 	}
 
@@ -420,7 +439,8 @@ func (m model) viewSequencer() string {
 	}
 
 	// Signal Visualizer - shows voltages/wave shapes for all 4 channels
-	signalViz := renderSignalVisualizer(s)
+	// Pass pointer to allow Harmonica animation state updates
+	signalViz := renderSignalVisualizer(&m.sequencer)
 	b.WriteString(signalViz + "\n\n")
 
 	// Clock visualization
@@ -541,8 +561,8 @@ func (m model) viewPortSelection() string {
 }
 
 // renderSignalVisualizer creates a visual representation of the signal/voltage output
-// for all 4 channels, showing the wave shape as a graph with 4 lines
-func renderSignalVisualizer(s sequencerModel) string {
+// for all 4 channels, showing the wave shape as a graph with 4 lines using Harmonica for smooth animations
+func renderSignalVisualizer(s *sequencerModel) string {
 	const graphHeight = 8 // Height of the graph in lines
 	const graphWidth = 64 // Width of the graph (4 chars per step)
 
@@ -556,7 +576,27 @@ func renderSignalVisualizer(s sequencerModel) string {
 	}
 
 	b.WriteString(titleStyle.Render("Signal Visualizer") + " ")
-	b.WriteString(helpStyle.Render("(4 channels)") + "\n")
+	b.WriteString(helpStyle.Render("(4 channels • animated with Harmonica)") + "\n")
+
+	// Update animation values using Harmonica spring for smooth transitions
+	for ch := 0; ch < numChannels; ch++ {
+		for step := 0; step < numSteps; step++ {
+			var targetValue float64
+			if s.steps[ch][step] {
+				// Active step: target is the note value
+				targetValue = float64(s.notes[ch][step])
+			} else {
+				// Inactive step: target is 0 (baseline)
+				targetValue = 0
+			}
+			// Update spring animation
+			s.visualizerValues[ch][step], s.visualizerVelocities[ch][step] = s.visualizerSpring.Update(
+				s.visualizerValues[ch][step],
+				s.visualizerVelocities[ch][step],
+				targetValue,
+			)
+		}
+	}
 
 	// Create a 2D grid to represent the graph
 	// Each row represents a voltage level, each column represents a step position
@@ -568,22 +608,23 @@ func renderSignalVisualizer(s sequencerModel) string {
 		}
 	}
 
-	// Calculate the MIDI note range across all active steps
+	// Calculate the MIDI note range across all active steps (using animated values)
 	minNote, maxNote := minMIDINote, maxMIDINote
 	hasActiveSteps := false
 	for ch := 0; ch < numChannels; ch++ {
 		for step := 0; step < numSteps; step++ {
-			if s.steps[ch][step] {
+			animValue := int(s.visualizerValues[ch][step])
+			if animValue > 0 { // Consider it active if animated value is above 0
 				if !hasActiveSteps {
-					minNote = s.notes[ch][step]
-					maxNote = s.notes[ch][step]
+					minNote = animValue
+					maxNote = animValue
 					hasActiveSteps = true
 				} else {
-					if s.notes[ch][step] < minNote {
-						minNote = s.notes[ch][step]
+					if animValue < minNote {
+						minNote = animValue
 					}
-					if s.notes[ch][step] > maxNote {
-						maxNote = s.notes[ch][step]
+					if animValue > maxNote {
+						maxNote = animValue
 					}
 				}
 			}
@@ -630,16 +671,18 @@ func renderSignalVisualizer(s sequencerModel) string {
 	// Channel symbols for better visibility
 	channelSymbols := []rune{'█', '▓', '▒', '░'}
 
-	// Plot each channel's signal
+	// Plot each channel's signal using animated values
 	for ch := 0; ch < numChannels; ch++ {
 		for step := 0; step < numSteps; step++ {
 			// Each step takes up 4 characters width
 			x := step * 4
 
-			if s.steps[ch][step] {
-				// Active step: draw the signal at the note's voltage level
-				note := s.notes[ch][step]
-				y := noteToY(note)
+			// Use the animated value from Harmonica
+			animValue := int(s.visualizerValues[ch][step])
+
+			if animValue > 0 {
+				// Active or animating: draw the signal at the animated value's voltage level
+				y := noteToY(animValue)
 
 				// Draw across all 4 positions for this step
 				for dx := 0; dx < 4 && x+dx < graphWidth; dx++ {
@@ -648,8 +691,8 @@ func renderSignalVisualizer(s sequencerModel) string {
 					}
 				}
 			} else {
-				// Inactive step: draw at zero/baseline (middle or bottom)
-				y := graphHeight - 1 // Bottom of graph for inactive
+				// Inactive step: draw at zero/baseline (bottom of graph)
+				y := graphHeight - 1
 				for dx := 0; dx < 4 && x+dx < graphWidth; dx++ {
 					if grid[y][x+dx] == ' ' {
 						grid[y][x+dx] = '·'

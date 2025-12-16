@@ -152,7 +152,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			prevStep := m.sequencer.currentStep
 			for ch := 0; ch < numChannels; ch++ {
 				if m.sequencer.steps[ch][prevStep] {
-					m.sequencer.sendNoteOff(uint8(ch), uint8(m.sequencer.notes[ch][prevStep]))
+					m.sequencer.sendNoteOff(uint8(ch), uint8(m.sequencer.notes[ch][prevStep])) //nolint:gosec // ch is bounded by numChannels constant
 				}
 			}
 
@@ -163,7 +163,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			currentStep := m.sequencer.currentStep
 			for ch := 0; ch < numChannels; ch++ {
 				if m.sequencer.steps[ch][currentStep] {
-					m.sequencer.sendNoteOn(uint8(ch), uint8(m.sequencer.notes[ch][currentStep]), 100)
+					m.sequencer.sendNoteOn(uint8(ch), uint8(m.sequencer.notes[ch][currentStep]), 100) //nolint:gosec // ch is bounded by numChannels constant
 				}
 			}
 
@@ -211,7 +211,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if fb.cursor > 0 {
 			fb.cursor--
 		}
-	case "down", "j":
+	case "down", "j": //nolint:goconst // keyboard shortcuts are better as literals for readability
 		if fb.cursor < len(fb.files)-1 {
 			fb.cursor++
 		}

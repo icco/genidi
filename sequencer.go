@@ -88,7 +88,7 @@ func (s *sequencerModel) closePort() {
 		// Send all notes off before closing
 		if s.sendFunc != nil {
 			for ch := 0; ch < numChannels; ch++ {
-				_ = s.sendFunc(midi.ControlChange(uint8(ch), 123, 0)) // All notes off
+				_ = s.sendFunc(midi.ControlChange(uint8(ch), 123, 0)) //nolint:gosec // ch is bounded by numChannels constant
 			}
 		}
 		_ = s.outPort.Close()
@@ -112,7 +112,7 @@ func (s *sequencerModel) sendNoteOff(channel, note uint8) {
 func (s *sequencerModel) sendAllNotesOff() {
 	if s.sendFunc != nil {
 		for ch := 0; ch < numChannels; ch++ {
-			_ = s.sendFunc(midi.ControlChange(uint8(ch), 123, 0)) // All notes off
+			_ = s.sendFunc(midi.ControlChange(uint8(ch), 123, 0)) //nolint:gosec // ch is bounded by numChannels constant
 		}
 	}
 }
@@ -593,7 +593,7 @@ func renderSignalVisualizer(s sequencerModel) string {
 	// Add some padding to the range for better visualization
 	noteRange := maxNote - minNote
 	if noteRange == 0 {
-		noteRange = notesPerOctave // Default to one octave if all notes are the same
+		// Default to one octave if all notes are the same
 		minNote -= notesPerOctave / 2
 		maxNote += notesPerOctave / 2
 	} else {
@@ -665,12 +665,12 @@ func renderSignalVisualizer(s sequencerModel) string {
 
 		// Color each character based on which channel symbol it is
 		for x := 0; x < graphWidth; x++ {
-			char := grid[y][x]
+			char := grid[y][x] //nolint:gosec // y and x are bounded by graphHeight and graphWidth constants
 			colored := false
 
 			for ch := 0; ch < numChannels; ch++ {
 				if char == channelSymbols[ch] {
-					b.WriteString(channelStyles[ch].Render(string(char)))
+					b.WriteString(channelStyles[ch].Render(string(char))) //nolint:gosec // ch is bounded by numChannels constant
 					colored = true
 					break
 				}
@@ -726,7 +726,7 @@ func renderSignalVisualizer(s sequencerModel) string {
 			}
 		}
 		noteName := midiNoteToName(displayNote)
-		b.WriteString(channelStyles[ch].Render(fmt.Sprintf("%s Ch%d:%s", symbol, ch+1, noteName)))
+		b.WriteString(channelStyles[ch].Render(fmt.Sprintf("%s Ch%d:%s", symbol, ch+1, noteName))) //nolint:gosec // ch is bounded by numChannels constant
 	}
 
 	return b.String()

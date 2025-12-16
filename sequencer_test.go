@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
+
+	"github.com/charmbracelet/harmonica"
 )
 
 func TestMIDILoadingSavingWithPerStepNotes(t *testing.T) {
@@ -88,4 +91,100 @@ func TestMIDILoadingSavingWithPerStepNotes(t *testing.T) {
 	}
 
 	fmt.Println("✓ MIDI loading with per-step notes works correctly!")
+}
+
+func TestSignalVisualizer(t *testing.T) {
+	// Create a sequencer with test data
+	s := sequencerModel{
+		bpm:         120,
+		cursorX:     0,
+		cursorY:     0,
+		isPlaying:   false,
+		currentStep: 0,
+	}
+
+	// Initialize spring for testing
+	s.visualizerSpring = harmonica.NewSpring(harmonica.FPS(60), 6.0, 0.5)
+
+	// Set up some notes across channels to test visualization
+	// Channel 0: ascending pattern
+	s.steps[0][0] = true
+	s.steps[0][4] = true
+	s.steps[0][8] = true
+	s.steps[0][12] = true
+	s.notes[0][0] = 60  // C4
+	s.notes[0][4] = 64  // E4
+	s.notes[0][8] = 67  // G4
+	s.notes[0][12] = 72 // C5
+	// Initialize animation values for immediate display
+	s.visualizerValues[0][0] = 60
+	s.visualizerValues[0][4] = 64
+	s.visualizerValues[0][8] = 67
+	s.visualizerValues[0][12] = 72
+
+	// Channel 1: different pattern
+	s.steps[1][2] = true
+	s.steps[1][6] = true
+	s.notes[1][2] = 55 // G3
+	s.notes[1][6] = 62 // D4
+	s.visualizerValues[1][2] = 55
+	s.visualizerValues[1][6] = 62
+
+	// Channel 2: single note
+	s.steps[2][5] = true
+	s.notes[2][5] = 48 // C3
+	s.visualizerValues[2][5] = 48
+
+	// Channel 3: high notes
+	s.steps[3][1] = true
+	s.steps[3][9] = true
+	s.notes[3][1] = 84 // C6
+	s.notes[3][9] = 96 // C7
+	s.visualizerValues[3][1] = 84
+	s.visualizerValues[3][9] = 96
+
+	// Render the signal visualizer (pass pointer for animation state)
+	output := renderSignalVisualizer(&s)
+
+	// Basic validation: check that output contains expected elements
+	if output == "" {
+		t.Error("Signal visualizer output should not be empty")
+	}
+
+	// Should contain the title
+	if !containsString(output, "Signal Visualizer") {
+		t.Error("Output should contain 'Signal Visualizer' title")
+	}
+
+	// Should contain legend with channel information
+	if !containsString(output, "Legend") {
+		t.Error("Output should contain legend")
+	}
+
+	// Should contain channel indicators
+	for i := 1; i <= 4; i++ {
+		chLabel := fmt.Sprintf("Ch%d", i)
+		if !containsString(output, chLabel) {
+			t.Errorf("Output should contain channel label %s", chLabel)
+		}
+	}
+
+	// Should contain graph borders
+	if !containsString(output, "│") {
+		t.Error("Output should contain vertical graph borders")
+	}
+	if !containsString(output, "└") || !containsString(output, "┘") {
+		t.Error("Output should contain bottom graph borders")
+	}
+
+	fmt.Println("✓ Signal visualizer rendering works correctly!")
+	// Print the actual output to verify visually
+	fmt.Println("\n--- Signal Visualizer Output ---")
+	fmt.Println(output)
+	fmt.Println("--- End Output ---")
+}
+
+// Helper function to check if a string contains a substring
+func containsString(s, substr string) bool {
+	return strings.Contains(s, substr)
 }

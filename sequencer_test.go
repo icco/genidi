@@ -124,8 +124,8 @@ func TestSignalVisualizer(t *testing.T) {
 	// Channel 3: high notes
 	s.steps[3][1] = true
 	s.steps[3][9] = true
-	s.notes[3][1] = 84  // C6
-	s.notes[3][9] = 96  // C7
+	s.notes[3][1] = 84 // C6
+	s.notes[3][9] = 96 // C7
 
 	// Render the signal visualizer
 	output := renderSignalVisualizer(s)

@@ -9,8 +9,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"gitlab.com/gomidi/midi/v2"
 	"gitlab.com/gomidi/midi/v2/drivers"
-	_ "gitlab.com/gomidi/midi/v2/drivers/rtmididrv" // Register rtmidi driver
 	"gitlab.com/gomidi/midi/v2/smf"
+
+	_ "gitlab.com/gomidi/midi/v2/drivers/rtmididrv"
 )
 
 const (
@@ -420,7 +421,8 @@ func (m model) viewSequencer() string {
 	b.WriteString(clockBar + "\n\n")
 
 	// Header row with proper spacing
-	b.WriteString("Channel  Note  ")
+	// 14 chars to match data rows: 8 for channel + 6 for note
+	b.WriteString("Chan    Note  ")
 	for i := 0; i < numSteps; i++ {
 		b.WriteString(fmt.Sprintf("%2d ", i+1))
 	}

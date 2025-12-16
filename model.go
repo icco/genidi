@@ -164,7 +164,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		// Handle playback tick
+		// Handle playback tick - only advance step when playing
 		if m.sequencer.isPlaying {
 			// Send note offs for previous step's notes
 			prevStep := m.sequencer.currentStep
@@ -186,7 +186,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sequencer.sendNoteOn(uint8(ch), uint8(m.sequencer.notes[ch][currentStep]), 100) //nolint:gosec
 				}
 			}
+		}
 
+		// Update visualizer animation state (must happen in Update, not View)
+		if m.mode == sequencerMode {
+			m.sequencer.updateVisualizerAnimation()
 			return m, tick()
 		}
 		return m, nil
@@ -266,6 +270,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				fb.message = fmt.Sprintf("Error loading MIDI: %v", err)
 			} else {
 				m.mode = sequencerMode
+				return m, tick() // Start ticks for visualizer animation
 			}
 		}
 	case "n":
@@ -276,6 +281,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			fb.message = fmt.Sprintf("Error creating MIDI: %v", err)
 		} else {
 			m.mode = sequencerMode
+			return m, tick() // Start ticks for visualizer animation
 		}
 	case "d":
 		// Delete selected file

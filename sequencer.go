@@ -617,9 +617,7 @@ func (s *sequencerModel) triggerNoteVisualization(channel int, velocity float64)
 
 // renderSignalVisualizer creates an oscilloscope-style display showing output waveforms over time
 func renderSignalVisualizer(s *sequencerModel) string {
-	const graphHeight = 8  // Height of each channel's waveform
-	const graphWidth = 64  // Width of the display (matches history length)
-	const channelHeight = 2 // Height per channel in the combined view
+	const graphWidth = 64 // Width of the display (matches history length)
 
 	var b strings.Builder
 

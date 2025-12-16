@@ -126,13 +126,19 @@ func (fb *fileBrowserModel) loadFiles() {
 		}
 	}
 
-	// Reset cursor and viewport if out of bounds
+	fb.adjustViewportBounds()
+}
+
+// adjustViewportBounds ensures cursor and viewport are within valid ranges
+func (fb *fileBrowserModel) adjustViewportBounds() {
+	// Reset cursor if out of bounds
 	if fb.cursor >= len(fb.files) && len(fb.files) > 0 {
 		fb.cursor = len(fb.files) - 1
 	}
 	if fb.cursor < 0 {
 		fb.cursor = 0
 	}
+	// Ensure viewport top doesn't exceed cursor
 	if fb.viewportTop > fb.cursor {
 		fb.viewportTop = fb.cursor
 	}
@@ -272,13 +278,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				} else {
 					fb.message = fmt.Sprintf("Deleted %s", selected.name)
 					fb.loadFiles()
-					// Adjust viewport if needed after deletion
-					if fb.cursor >= len(fb.files) && len(fb.files) > 0 {
-						fb.cursor = len(fb.files) - 1
-					}
-					if fb.viewportTop > fb.cursor {
-						fb.viewportTop = fb.cursor
-					}
+					fb.adjustViewportBounds()
 				}
 			}
 		}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,7 +21,7 @@ func TestFileBrowserViewport(t *testing.T) {
 
 	// Create 30 test files
 	for i := 0; i < 30; i++ {
-		filename := filepath.Join(testDir, "test_"+string(rune('0'+i%10))+"_file.mid")
+		filename := filepath.Join(testDir, fmt.Sprintf("test_%d_file.mid", i))
 		if err := os.WriteFile(filename, []byte{}, 0600); err != nil {
 			t.Fatalf("Error creating test file: %v", err)
 		}
@@ -90,7 +91,7 @@ func TestFileBrowserLoadFilesResetsViewport(t *testing.T) {
 
 	// Create some test files
 	for i := 0; i < 5; i++ {
-		filename := filepath.Join(testDir, "test_file_"+string(rune('0'+i))+".mid")
+		filename := filepath.Join(testDir, fmt.Sprintf("test_file_%d.mid", i))
 		if err := os.WriteFile(filename, []byte{}, 0600); err != nil {
 			t.Fatalf("Error creating test file: %v", err)
 		}

@@ -423,8 +423,9 @@ func (m model) viewSequencer() string {
 	// Header row with proper spacing
 	// 14 chars to match data rows: 8 for channel + 6 for note
 	b.WriteString("Chan    Note  ")
+	hexDigits := "123456789ABCDEFG"
 	for i := 0; i < numSteps; i++ {
-		b.WriteString(fmt.Sprintf("%2d ", i+1))
+		b.WriteString(fmt.Sprintf(" %c ", hexDigits[i]))
 	}
 	b.WriteString("\n")
 
@@ -445,18 +446,18 @@ func (m model) viewSequencer() string {
 			b.WriteString(fmt.Sprintf("%-5s ", noteName))
 		}
 
-		// Steps (3 chars wide per step: " X ")
+		// Steps (3 chars wide per step)
 		for step := 0; step < numSteps; step++ {
 			// Determine cell content
 			var cell string
 			if s.steps[ch][step] {
-				cell = "●"
+				cell = " ● "
 			} else {
-				cell = "·"
+				cell = " · "
 			}
 
-			// Apply styling
-			cellStyle := lipgloss.NewStyle()
+			// Apply styling with fixed width
+			cellStyle := lipgloss.NewStyle().Width(3)
 
 			// Highlight current cursor position
 			if ch == s.cursorY && step == s.cursorX {
@@ -475,7 +476,7 @@ func (m model) viewSequencer() string {
 				cellStyle = cellStyle.Foreground(lipgloss.Color("#666666"))
 			}
 
-			b.WriteString(cellStyle.Render(fmt.Sprintf(" %s ", cell)))
+			b.WriteString(cellStyle.Render(cell))
 		}
 		b.WriteString("\n")
 	}

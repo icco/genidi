@@ -93,7 +93,7 @@ func initialModel() model {
 
 func (fb *fileBrowserModel) loadFiles() {
 	fb.files = []fileInfo{}
-	
+
 	// Add parent directory entry
 	if fb.currentDir != "/" {
 		fb.files = append(fb.files, fileInfo{
@@ -148,20 +148,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		// Handle playback tick
 		if m.sequencer.isPlaying {
+			// Send note offs for previous step's notes
+			prevStep := m.sequencer.currentStep
+			for ch := 0; ch < numChannels; ch++ {
+				if m.sequencer.steps[ch][prevStep] {
+					m.sequencer.sendNoteOff(uint8(ch), uint8(m.sequencer.notes[ch][prevStep]))
+				}
+			}
+
+			// Advance to next step
 			m.sequencer.currentStep = (m.sequencer.currentStep + 1) % numSteps
+
+			// Send note ons for current step's active notes
+			currentStep := m.sequencer.currentStep
+			for ch := 0; ch < numChannels; ch++ {
+				if m.sequencer.steps[ch][currentStep] {
+					m.sequencer.sendNoteOn(uint8(ch), uint8(m.sequencer.notes[ch][currentStep]), 100)
+				}
+			}
+
 			return m, tick()
 		}
 		return m, nil
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
+			// Close MIDI port before quitting
+			m.sequencer.closePort()
+			return m, tea.Quit
+		case "q":
 			if m.mode == fileBrowserMode {
+				// Close MIDI port before quitting
+				m.sequencer.closePort()
 				return m, tea.Quit
-			} else {
+			} else if !m.sequencer.selectingPort {
 				// Return to file browser from sequencer
 				m.mode = fileBrowserMode
 				m.sequencer.isPlaying = false
+				m.sequencer.sendAllNotesOff()
 				return m, nil
 			}
 		}

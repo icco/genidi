@@ -5,15 +5,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"gitlab.com/gomidi/midi/v2"
+	"gitlab.com/gomidi/midi/v2/drivers"
+	_ "gitlab.com/gomidi/midi/v2/drivers/rtmididrv" // Register rtmidi driver
 	"gitlab.com/gomidi/midi/v2/smf"
 )
 
 const (
-	numSteps    = 16
-	numChannels = 4
+	numSteps            = 16
+	numChannels         = 4
 	ticksPerQuarterNote = 960 // Standard MIDI resolution
 )
 
@@ -28,6 +30,87 @@ type sequencerModel struct {
 	isPlaying   bool
 	currentStep int
 	message     string
+
+	// MIDI output
+	midiOuts      []drivers.Out                // Available MIDI output ports
+	midiOutNames  []string                     // Names of available ports
+	selectedOut   int                          // Currently selected output index (-1 = none)
+	outPort       drivers.Out                  // Currently open output port
+	sendFunc      func(msg midi.Message) error // Function to send MIDI
+	selectingPort bool                         // Whether we're in port selection mode
+}
+
+func (s *sequencerModel) refreshMIDIPorts() {
+	s.midiOuts = nil
+	s.midiOutNames = nil
+
+	outs := midi.GetOutPorts()
+	for _, out := range outs {
+		s.midiOuts = append(s.midiOuts, out)
+		s.midiOutNames = append(s.midiOutNames, out.String())
+	}
+
+	// If we had a selected port that's no longer available, reset
+	if s.selectedOut >= len(s.midiOuts) {
+		s.selectedOut = -1
+		s.closePort()
+	}
+}
+
+func (s *sequencerModel) selectPort(index int) error {
+	if index < 0 || index >= len(s.midiOuts) {
+		return fmt.Errorf("invalid port index")
+	}
+
+	// Close existing port if open
+	s.closePort()
+
+	// Open the new port
+	out := s.midiOuts[index]
+	send, err := midi.SendTo(out)
+	if err != nil {
+		return fmt.Errorf("failed to open port %s: %w", out.String(), err)
+	}
+
+	s.selectedOut = index
+	s.outPort = out
+	s.sendFunc = send
+	s.message = fmt.Sprintf("Connected to: %s", out.String())
+	return nil
+}
+
+func (s *sequencerModel) closePort() {
+	if s.outPort != nil {
+		// Send all notes off before closing
+		if s.sendFunc != nil {
+			for ch := 0; ch < numChannels; ch++ {
+				_ = s.sendFunc(midi.ControlChange(uint8(ch), 123, 0)) // All notes off
+			}
+		}
+		_ = s.outPort.Close()
+		s.outPort = nil
+		s.sendFunc = nil
+	}
+}
+
+func (s *sequencerModel) sendNoteOn(channel, note, velocity uint8) {
+	if s.sendFunc != nil {
+		_ = s.sendFunc(midi.NoteOn(channel, note, velocity))
+	}
+}
+
+func (s *sequencerModel) sendNoteOff(channel, note uint8) {
+	if s.sendFunc != nil {
+		_ = s.sendFunc(midi.NoteOff(channel, note))
+	}
+}
+
+func (s *sequencerModel) sendAllNotesOff() {
+	if s.sendFunc != nil {
+		for ch := 0; ch < numChannels; ch++ {
+			_ = s.sendFunc(midi.ControlChange(uint8(ch), 123, 0)) // All notes off
+		}
+	}
 }
 
 func (s *sequencerModel) createNewMIDI(path string) error {
@@ -37,7 +120,12 @@ func (s *sequencerModel) createNewMIDI(path string) error {
 	s.cursorY = 0
 	s.isPlaying = false
 	s.currentStep = 0
+	s.selectedOut = -1
+	s.selectingPort = false
 	s.message = "New MIDI file created"
+
+	// Refresh available MIDI ports
+	s.refreshMIDIPorts()
 
 	// Initialize with default notes (C4, D4, E4, F4) for each step
 	defaultNotes := [numChannels]int{60, 62, 64, 65}
@@ -58,7 +146,12 @@ func (s *sequencerModel) loadMIDI(path string) error {
 	s.cursorY = 0
 	s.isPlaying = false
 	s.currentStep = 0
+	s.selectedOut = -1
+	s.selectingPort = false
 	s.message = fmt.Sprintf("Loaded: %s", path)
+
+	// Refresh available MIDI ports
+	s.refreshMIDIPorts()
 
 	// Initialize with default notes
 	defaultNotes := [numChannels]int{60, 62, 64, 65}
@@ -176,6 +269,36 @@ func (s *sequencerModel) saveMIDI() error {
 func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	s := &m.sequencer
 
+	// Handle port selection mode
+	if s.selectingPort {
+		switch msg.String() {
+		case "up", "k":
+			if s.selectedOut > 0 {
+				s.selectedOut--
+			} else if s.selectedOut == -1 && len(s.midiOuts) > 0 {
+				s.selectedOut = 0
+			}
+		case "down", "j":
+			if s.selectedOut < len(s.midiOuts)-1 {
+				s.selectedOut++
+			}
+		case "enter":
+			if s.selectedOut >= 0 && s.selectedOut < len(s.midiOuts) {
+				if err := s.selectPort(s.selectedOut); err != nil {
+					s.message = fmt.Sprintf("Error: %v", err)
+				}
+			}
+			s.selectingPort = false
+		case "escape", "q", "o":
+			s.selectingPort = false
+		case "r":
+			// Refresh ports list
+			s.refreshMIDIPorts()
+			s.message = fmt.Sprintf("Found %d MIDI output(s)", len(s.midiOuts))
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "left", "h":
 		if s.cursorX > 0 {
@@ -232,11 +355,14 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "p":
-		// Toggle playback (visual only for now)
+		// Toggle playback
 		s.isPlaying = !s.isPlaying
 		if s.isPlaying {
 			s.currentStep = 0
 			return m, tick()
+		} else {
+			// Stop all notes when stopping playback
+			s.sendAllNotesOff()
 		}
 	case "c":
 		// Clear all steps in current channel
@@ -245,6 +371,15 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if err := s.saveMIDI(); err != nil {
 			s.message = fmt.Sprintf("Error saving: %v", err)
+		}
+	case "o":
+		// Open MIDI output port selection
+		s.refreshMIDIPorts()
+		s.selectingPort = true
+		if len(s.midiOuts) == 0 {
+			s.message = "No MIDI outputs found. Press 'r' to refresh."
+		} else {
+			s.message = fmt.Sprintf("Found %d MIDI output(s)", len(s.midiOuts))
 		}
 	}
 
@@ -266,7 +401,19 @@ func (m model) viewSequencer() string {
 	// Title
 	b.WriteString(titleStyle.Render("MIDI Sequencer Editor") + "\n\n")
 	b.WriteString(fmt.Sprintf("File: %s\n", s.filePath))
-	b.WriteString(fmt.Sprintf("BPM: %d (use +/- to adjust)\n\n", s.bpm))
+	b.WriteString(fmt.Sprintf("BPM: %d (use +/- to adjust)\n", s.bpm))
+
+	// MIDI output status
+	if s.outPort != nil {
+		b.WriteString(fmt.Sprintf("MIDI Out: %s ✓\n\n", s.outPort.String()))
+	} else {
+		b.WriteString("MIDI Out: Not connected (press 'o' to select)\n\n")
+	}
+
+	// Port selection overlay
+	if s.selectingPort {
+		return m.viewPortSelection()
+	}
 
 	// Clock visualization
 	clockBar := renderClockBar(s.bpm, s.isPlaying, s.currentStep)
@@ -308,17 +455,17 @@ func (m model) viewSequencer() string {
 
 			// Apply styling
 			cellStyle := lipgloss.NewStyle()
-			
+
 			// Highlight current cursor position
 			if ch == s.cursorY && step == s.cursorX {
 				cellStyle = cellStyle.Background(lipgloss.Color("#7D56F4"))
 			}
-			
+
 			// Highlight playing step
 			if s.isPlaying && step == s.currentStep {
 				cellStyle = cellStyle.Foreground(lipgloss.Color("#00FF00")).Bold(true)
 			}
-			
+
 			// Active step gets color
 			if s.steps[ch][step] {
 				cellStyle = cellStyle.Foreground(lipgloss.Color("#FFD700"))
@@ -337,21 +484,62 @@ func (m model) viewSequencer() string {
 	}
 
 	b.WriteString("\n" + helpStyle.Render("Navigation: ↑↓←→ or hjkl • Space: toggle step • w/s: change note (for current step)"))
-	b.WriteString("\n" + helpStyle.Render("+/-: tempo • p: play/stop • c: clear channel • q: back to files"))
+	b.WriteString("\n" + helpStyle.Render("+/-: tempo • p: play/stop • c: clear channel • o: MIDI output • q: back to files"))
+
+	return b.String()
+}
+
+func (m model) viewPortSelection() string {
+	s := m.sequencer
+
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("Select MIDI Output") + "\n\n")
+
+	if len(s.midiOutNames) == 0 {
+		b.WriteString("No MIDI output ports found.\n\n")
+		b.WriteString("Make sure your MIDI interface is connected.\n")
+	} else {
+		for i, name := range s.midiOutNames {
+			cursor := "  "
+			if i == s.selectedOut {
+				cursor = "> "
+			}
+
+			// Mark currently connected port
+			connected := ""
+			if s.outPort != nil && s.outPort.String() == name {
+				connected = " (connected)"
+			}
+
+			if i == s.selectedOut {
+				b.WriteString(selectedStyle.Render(fmt.Sprintf("%s%s%s\n", cursor, name, connected)))
+			} else {
+				b.WriteString(fmt.Sprintf("%s%s%s\n", cursor, name, connected))
+			}
+		}
+	}
+
+	b.WriteString("\n")
+	if s.message != "" {
+		b.WriteString(errorStyle.Render(s.message) + "\n")
+	}
+
+	b.WriteString("\n" + helpStyle.Render("↑/k: up • ↓/j: down • enter: select • r: refresh • q/esc: cancel"))
 
 	return b.String()
 }
 
 func renderClockBar(bpm int, isPlaying bool, currentStep int) string {
 	barWidth := 50
-	
+
 	// Calculate position based on current step
 	progress := float64(currentStep) / float64(numSteps)
 	filled := int(progress * float64(barWidth))
-	
+
 	bar := strings.Builder{}
 	bar.WriteString("Clock: [")
-	
+
 	for i := 0; i < barWidth; i++ {
 		if i < filled && isPlaying {
 			bar.WriteString("█")
@@ -361,14 +549,14 @@ func renderClockBar(bpm int, isPlaying bool, currentStep int) string {
 			bar.WriteString("─")
 		}
 	}
-	
+
 	bar.WriteString("]")
-	
+
 	status := "Stopped"
 	if isPlaying {
 		status = "Playing"
 	}
-	
+
 	return fmt.Sprintf("%s %s", bar.String(), status)
 }
 

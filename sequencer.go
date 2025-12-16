@@ -423,7 +423,7 @@ func (m model) viewSequencer() string {
 	// Header row with proper spacing
 	// 14 chars to match data rows: 8 for channel + 6 for note
 	b.WriteString("Chan    Note  ")
-	hexDigits := "123456789ABCDEFG"
+	hexDigits := "0123456789ABCDEF"
 	for i := 0; i < numSteps; i++ {
 		b.WriteString(fmt.Sprintf(" %c ", hexDigits[i]))
 	}

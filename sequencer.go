@@ -733,33 +733,57 @@ func renderSignalVisualizer(s sequencerModel) string {
 }
 
 func renderClockBar(bpm int, isPlaying bool, currentStep int) string {
-	barWidth := 50
-
-	// Calculate position based on current step
-	progress := float64(currentStep) / float64(numSteps)
-	filled := int(progress * float64(barWidth))
+	// Colors for the clock bar - gradient from cyan to magenta
+	colors := []string{
+		"#00FFFF", "#00E5FF", "#00CCFF", "#00B2FF",
+		"#0099FF", "#0080FF", "#0066FF", "#1A4DFF",
+		"#3333FF", "#4D1AFF", "#6600FF", "#8000FF",
+		"#9900FF", "#B300FF", "#CC00FF", "#FF00FF",
+	}
 
 	bar := strings.Builder{}
-	bar.WriteString("Clock: [")
+	// 14 chars to align with grid: "Chan    Note  " = 8 + 6 = 14 chars
+	bar.WriteString("Clock         ")
 
-	for i := 0; i < barWidth; i++ {
-		if i < filled && isPlaying {
-			bar.WriteString("█")
-		} else if i == filled && isPlaying {
-			bar.WriteString("▶")
+	// Each step is 3 characters wide to match the grid
+	for i := 0; i < numSteps; i++ {
+		var cell string
+		var cellStyle lipgloss.Style
+
+		if isPlaying && i == currentStep {
+			// Current playing position - bright indicator
+			cell = " ▶ "
+			cellStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#FFFFFF")).
+				Background(lipgloss.Color(colors[i])).
+				Bold(true)
+		} else if isPlaying && i < currentStep {
+			// Already played - filled with color
+			cell = " █ "
+			cellStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(colors[i]))
 		} else {
-			bar.WriteString("─")
+			// Not yet played or stopped - dim
+			cell = " · "
+			cellStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#444444"))
 		}
+
+		bar.WriteString(cellStyle.Render(cell))
 	}
 
-	bar.WriteString("]")
-
-	status := "Stopped"
+	// Status after the bar
+	status := " Stopped"
 	if isPlaying {
-		status = "Playing"
+		status = " Playing"
 	}
+	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
+	if isPlaying {
+		statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Bold(true)
+	}
+	bar.WriteString(statusStyle.Render(status))
 
-	return fmt.Sprintf("%s %s", bar.String(), status)
+	return bar.String()
 }
 
 func midiNoteToName(note int) string {

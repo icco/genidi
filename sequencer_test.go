@@ -116,22 +116,32 @@ func TestSignalVisualizer(t *testing.T) {
 	s.notes[0][4] = 64  // E4
 	s.notes[0][8] = 67  // G4
 	s.notes[0][12] = 72 // C5
+	// Initialize animation values for immediate display
+	s.visualizerValues[0][0] = 60
+	s.visualizerValues[0][4] = 64
+	s.visualizerValues[0][8] = 67
+	s.visualizerValues[0][12] = 72
 
 	// Channel 1: different pattern
 	s.steps[1][2] = true
 	s.steps[1][6] = true
 	s.notes[1][2] = 55 // G3
 	s.notes[1][6] = 62 // D4
+	s.visualizerValues[1][2] = 55
+	s.visualizerValues[1][6] = 62
 
 	// Channel 2: single note
 	s.steps[2][5] = true
 	s.notes[2][5] = 48 // C3
+	s.visualizerValues[2][5] = 48
 
 	// Channel 3: high notes
 	s.steps[3][1] = true
 	s.steps[3][9] = true
 	s.notes[3][1] = 84 // C6
 	s.notes[3][9] = 96 // C7
+	s.visualizerValues[3][1] = 84
+	s.visualizerValues[3][9] = 96
 
 	// Render the signal visualizer (pass pointer for animation state)
 	output := renderSignalVisualizer(&s)

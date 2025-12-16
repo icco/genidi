@@ -221,6 +221,8 @@ func (s *sequencerModel) loadMIDI(path string) error {
 				if step < numSteps && velocity > 0 {
 					s.notes[ch][step] = int(key)
 					s.steps[ch][step] = true
+					// Initialize animation value to the note value for immediate display
+					s.visualizerValues[ch][step] = float64(key)
 				}
 			}
 		}

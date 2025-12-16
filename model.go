@@ -19,6 +19,14 @@ const (
 	sequencerMode
 )
 
+// Key constants to avoid goconst linting issues
+const (
+	keyUp   = "up"
+	keyDown = "down"
+	keyLeft = "left"
+	keyRight = "right"
+)
+
 // tickMsg is used for playback animation timing
 type tickMsg time.Time
 
@@ -162,7 +170,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			prevStep := m.sequencer.currentStep
 			for ch := 0; ch < numChannels; ch++ {
 				if m.sequencer.steps[ch][prevStep] {
-					m.sequencer.sendNoteOff(uint8(ch), uint8(m.sequencer.notes[ch][prevStep]))
+					// Safe cast: ch is bounded by numChannels (4), notes[ch][prevStep] is bounded by MIDI note range (0-127)
+					m.sequencer.sendNoteOff(uint8(ch), uint8(m.sequencer.notes[ch][prevStep])) //nolint:gosec
 				}
 			}
 
@@ -173,7 +182,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			currentStep := m.sequencer.currentStep
 			for ch := 0; ch < numChannels; ch++ {
 				if m.sequencer.steps[ch][currentStep] {
-					m.sequencer.sendNoteOn(uint8(ch), uint8(m.sequencer.notes[ch][currentStep]), 100)
+					// Safe cast: ch is bounded by numChannels (4), notes[ch][currentStep] is bounded by MIDI note range (0-127)
+					m.sequencer.sendNoteOn(uint8(ch), uint8(m.sequencer.notes[ch][currentStep]), 100) //nolint:gosec
 				}
 			}
 
@@ -217,7 +227,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	fb := &m.fileBrowser
 
 	switch msg.String() {
-	case "up", "k":
+	case keyUp, "k":
 		if fb.cursor > 0 {
 			fb.cursor--
 			// Scroll up if cursor moves above viewport
@@ -225,7 +235,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				fb.viewportTop = fb.cursor
 			}
 		}
-	case "down", "j":
+	case keyDown, "j":
 		if fb.cursor < len(fb.files)-1 {
 			fb.cursor++
 			// Scroll down if cursor moves below viewport

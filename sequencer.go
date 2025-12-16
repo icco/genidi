@@ -18,6 +18,9 @@ const (
 	numSteps            = 16
 	numChannels         = 4
 	ticksPerQuarterNote = 960 // Standard MIDI resolution
+	minMIDINote         = 0   // Minimum MIDI note value
+	maxMIDINote         = 127 // Maximum MIDI note value
+	notesPerOctave      = 12  // Number of notes in an octave
 )
 
 // sequencerModel manages the MIDI sequencer state
@@ -565,7 +568,7 @@ func renderSignalVisualizer(s sequencerModel) string {
 	}
 
 	// Calculate the MIDI note range across all active steps
-	minNote, maxNote := 0, 127
+	minNote, maxNote := minMIDINote, maxMIDINote
 	hasActiveSteps := false
 	for ch := 0; ch < numChannels; ch++ {
 		for step := 0; step < numSteps; step++ {
@@ -589,9 +592,9 @@ func renderSignalVisualizer(s sequencerModel) string {
 	// Add some padding to the range for better visualization
 	noteRange := maxNote - minNote
 	if noteRange == 0 {
-		noteRange = 12 // Default to one octave if all notes are the same
-		minNote -= 6
-		maxNote += 6
+		noteRange = notesPerOctave // Default to one octave if all notes are the same
+		minNote -= notesPerOctave / 2
+		maxNote += notesPerOctave / 2
 	} else {
 		padding := noteRange / 4
 		minNote -= padding
@@ -599,11 +602,11 @@ func renderSignalVisualizer(s sequencerModel) string {
 	}
 
 	// Clamp to valid MIDI range
-	if minNote < 0 {
-		minNote = 0
+	if minNote < minMIDINote {
+		minNote = minMIDINote
 	}
-	if maxNote > 127 {
-		maxNote = 127
+	if maxNote > maxMIDINote {
+		maxNote = maxMIDINote
 	}
 
 	// Map note values to graph Y positions (inverted: top is high notes)
@@ -713,7 +716,15 @@ func renderSignalVisualizer(s sequencerModel) string {
 			b.WriteString(" │ ")
 		}
 		symbol := string(channelSymbols[ch])
-		noteName := midiNoteToName(s.notes[ch][s.cursorX])
+		// Show the first active note for this channel, or the cursor note if no active notes
+		displayNote := s.notes[ch][s.cursorX]
+		for step := 0; step < numSteps; step++ {
+			if s.steps[ch][step] {
+				displayNote = s.notes[ch][step]
+				break
+			}
+		}
+		noteName := midiNoteToName(displayNote)
 		b.WriteString(channelStyles[ch].Render(fmt.Sprintf("%s Ch%d:%s", symbol, ch+1, noteName)))
 	}
 

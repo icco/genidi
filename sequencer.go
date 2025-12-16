@@ -94,7 +94,8 @@ func (s *sequencerModel) closePort() {
 		// Send all notes off before closing
 		if s.sendFunc != nil {
 			for ch := 0; ch < numChannels; ch++ {
-				_ = s.sendFunc(midi.ControlChange(uint8(ch), 123, 0)) //nolint:gosec // ch is bounded by numChannels constant
+				// Safe cast: ch is bounded by numChannels constant (4)
+				_ = s.sendFunc(midi.ControlChange(uint8(ch), 123, 0)) //nolint:gosec // All notes off
 			}
 		}
 		_ = s.outPort.Close()
@@ -118,7 +119,8 @@ func (s *sequencerModel) sendNoteOff(channel, note uint8) {
 func (s *sequencerModel) sendAllNotesOff() {
 	if s.sendFunc != nil {
 		for ch := 0; ch < numChannels; ch++ {
-			_ = s.sendFunc(midi.ControlChange(uint8(ch), 123, 0)) //nolint:gosec // ch is bounded by numChannels constant
+			// Safe cast: ch is bounded by numChannels constant (4)
+			_ = s.sendFunc(midi.ControlChange(uint8(ch), 123, 0)) //nolint:gosec // All notes off
 		}
 	}
 }
@@ -297,13 +299,13 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle port selection mode
 	if s.selectingPort {
 		switch msg.String() {
-		case "up", "k":
+		case keyUp, "k":
 			if s.selectedOut > 0 {
 				s.selectedOut--
 			} else if s.selectedOut == -1 && len(s.midiOuts) > 0 {
 				s.selectedOut = 0
 			}
-		case "down", "j":
+		case keyDown, "j":
 			if s.selectedOut < len(s.midiOuts)-1 {
 				s.selectedOut++
 			}
@@ -325,19 +327,19 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "left", "h":
+	case keyLeft, "h":
 		if s.cursorX > 0 {
 			s.cursorX--
 		}
-	case "right", "l":
+	case keyRight, "l":
 		if s.cursorX < numSteps-1 {
 			s.cursorX++
 		}
-	case "up", "k":
+	case keyUp, "k":
 		if s.cursorY > 0 {
 			s.cursorY--
 		}
-	case "down", "j":
+	case keyDown, "j":
 		if s.cursorY < numChannels-1 {
 			s.cursorY++
 		}

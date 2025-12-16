@@ -44,10 +44,11 @@ type sequencerModel struct {
 	sendFunc      func(msg midi.Message) error // Function to send MIDI
 	selectingPort bool                         // Whether we're in port selection mode
 
-	// Animation state for signal visualizer using Harmonica
-	visualizerValues     [numChannels][numSteps]float64 // Current animated values
-	visualizerVelocities [numChannels][numSteps]float64 // Spring velocities
-	visualizerSpring     harmonica.Spring               // Spring for smooth animations
+	// Animation state for signal visualizer - shows output waveform over time
+	waveformHistory [numChannels][]float64 // Rolling history of output levels per channel
+	waveformSpring  harmonica.Spring       // Spring for smooth decay
+	currentLevels   [numChannels]float64   // Current output level per channel
+	levelVelocities [numChannels]float64   // Spring velocities for decay
 }
 
 func (s *sequencerModel) refreshMIDIPorts() {
@@ -108,6 +109,8 @@ func (s *sequencerModel) sendNoteOn(channel, note, velocity uint8) {
 	if s.sendFunc != nil {
 		_ = s.sendFunc(midi.NoteOn(channel, note, velocity))
 	}
+	// Trigger visualization regardless of MIDI output
+	s.triggerNoteVisualization(int(channel), float64(velocity))
 }
 
 func (s *sequencerModel) sendNoteOff(channel, note uint8) {
@@ -139,9 +142,17 @@ func (s *sequencerModel) createNewMIDI(path string) error {
 	// Refresh available MIDI ports
 	s.refreshMIDIPorts()
 
-	// Initialize spring animation for smooth visualizer transitions
-	// FPS(60) sets 60 fps, 6.0 is angular frequency (speed), 0.5 is damping ratio (springiness)
-	s.visualizerSpring = harmonica.NewSpring(harmonica.FPS(60), 6.0, 0.5)
+	// Initialize spring animation for smooth level decay
+	// FPS(60) sets 60 fps, 8.0 is angular frequency (faster decay), 0.6 is damping ratio
+	s.waveformSpring = harmonica.NewSpring(harmonica.FPS(60), 8.0, 0.6)
+
+	// Initialize waveform history (64 samples per channel for display width)
+	const historyLength = 64
+	for i := 0; i < numChannels; i++ {
+		s.waveformHistory[i] = make([]float64, historyLength)
+		s.currentLevels[i] = 0
+		s.levelVelocities[i] = 0
+	}
 
 	// Initialize with default notes (C4, D4, E4, F4) for each step
 	defaultNotes := [numChannels]int{60, 62, 64, 65}
@@ -149,9 +160,6 @@ func (s *sequencerModel) createNewMIDI(path string) error {
 		for j := 0; j < numSteps; j++ {
 			s.notes[i][j] = defaultNotes[i] //nolint:gosec // i is bounded by numChannels constant
 			s.steps[i][j] = false
-			// Initialize animation values to 0 (inactive/baseline)
-			s.visualizerValues[i][j] = 0
-			s.visualizerVelocities[i][j] = 0
 		}
 	}
 
@@ -172,8 +180,16 @@ func (s *sequencerModel) loadMIDI(path string) error {
 	// Refresh available MIDI ports
 	s.refreshMIDIPorts()
 
-	// Initialize spring animation for smooth visualizer transitions
-	s.visualizerSpring = harmonica.NewSpring(harmonica.FPS(60), 6.0, 0.5)
+	// Initialize spring animation for smooth level decay
+	s.waveformSpring = harmonica.NewSpring(harmonica.FPS(60), 8.0, 0.6)
+
+	// Initialize waveform history (64 samples per channel for display width)
+	const historyLength = 64
+	for i := 0; i < numChannels; i++ {
+		s.waveformHistory[i] = make([]float64, historyLength)
+		s.currentLevels[i] = 0
+		s.levelVelocities[i] = 0
+	}
 
 	// Initialize with default notes
 	defaultNotes := [numChannels]int{60, 62, 64, 65}
@@ -181,9 +197,6 @@ func (s *sequencerModel) loadMIDI(path string) error {
 		for j := 0; j < numSteps; j++ {
 			s.notes[i][j] = defaultNotes[i] //nolint:gosec // i is bounded by numChannels constant
 			s.steps[i][j] = false
-			// Initialize animation values to 0 (inactive/baseline)
-			s.visualizerValues[i][j] = 0
-			s.visualizerVelocities[i][j] = 0
 		}
 	}
 
@@ -223,8 +236,6 @@ func (s *sequencerModel) loadMIDI(path string) error {
 				if step < numSteps && velocity > 0 {
 					s.notes[ch][step] = int(key)
 					s.steps[ch][step] = true
-					// Initialize animation value to the note value for immediate display
-					s.visualizerValues[ch][step] = float64(key)
 				}
 			}
 		}
@@ -564,11 +575,49 @@ func (m model) viewPortSelection() string {
 	return b.String()
 }
 
-// renderSignalVisualizer creates a visual representation of the signal/voltage output
-// for all 4 channels, showing the wave shape as a graph with 4 lines using Harmonica for smooth animations
+// updateVisualizerAnimation updates the waveform display based on current playback
+// This must be called from Update(), not View(), so state changes persist
+func (s *sequencerModel) updateVisualizerAnimation() {
+	const historyLength = 64
+
+	// Ensure history is initialized
+	for ch := 0; ch < numChannels; ch++ {
+		if len(s.waveformHistory[ch]) == 0 {
+			s.waveformHistory[ch] = make([]float64, historyLength)
+		}
+	}
+
+	// Update current levels with spring decay toward 0
+	for ch := 0; ch < numChannels; ch++ {
+		s.currentLevels[ch], s.levelVelocities[ch] = s.waveformSpring.Update(
+			s.currentLevels[ch],
+			s.levelVelocities[ch],
+			0, // Always decay toward 0
+		)
+	}
+
+	// Shift history left and add current levels
+	for ch := 0; ch < numChannels; ch++ {
+		// Shift all values left by 1
+		copy(s.waveformHistory[ch], s.waveformHistory[ch][1:])
+		// Add current level at the end (rightmost = newest)
+		s.waveformHistory[ch][historyLength-1] = s.currentLevels[ch]
+	}
+}
+
+// triggerNoteVisualization is called when a note is played to spike the visualizer
+func (s *sequencerModel) triggerNoteVisualization(channel int, velocity float64) {
+	if channel >= 0 && channel < numChannels {
+		// Set current level to velocity (0-1 range, normalized from MIDI 0-127)
+		s.currentLevels[channel] = velocity / 127.0
+		// Give it some initial upward velocity for a nice attack
+		s.levelVelocities[channel] = 2.0
+	}
+}
+
+// renderSignalVisualizer creates an oscilloscope-style display showing output waveforms over time
 func renderSignalVisualizer(s *sequencerModel) string {
-	const graphHeight = 8 // Height of the graph in lines
-	const graphWidth = 64 // Width of the graph (4 chars per step)
+	const graphWidth = 64 // Width of the display (matches history length)
 
 	var b strings.Builder
 
@@ -579,202 +628,69 @@ func renderSignalVisualizer(s *sequencerModel) string {
 		channelStyles[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(channelColors[i]))
 	}
 
-	b.WriteString(titleStyle.Render("Signal Visualizer") + " ")
-	b.WriteString(helpStyle.Render("(4 channels • animated with Harmonica)") + "\n")
+	// Dim style for baseline
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#333333"))
 
-	// Update animation values using Harmonica spring for smooth transitions
-	for ch := 0; ch < numChannels; ch++ {
-		for step := 0; step < numSteps; step++ {
-			var targetValue float64
-			if s.steps[ch][step] {
-				// Active step: target is the note value
-				targetValue = float64(s.notes[ch][step])
-			} else {
-				// Inactive step: target is 0 (baseline)
-				targetValue = 0
-			}
-			// Update spring animation
-			s.visualizerValues[ch][step], s.visualizerVelocities[ch][step] = s.visualizerSpring.Update(
-				s.visualizerValues[ch][step],
-				s.visualizerVelocities[ch][step],
-				targetValue,
-			)
-		}
-	}
-
-	// Create a 2D grid to represent the graph
-	// Each row represents a voltage level, each column represents a step position
-	grid := make([][]rune, graphHeight)
-	for i := range grid {
-		grid[i] = make([]rune, graphWidth)
-		for j := range grid[i] {
-			grid[i][j] = ' '
-		}
-	}
-
-	// Calculate the MIDI note range across all active steps (using animated values)
-	minNote, maxNote := minMIDINote, maxMIDINote
-	hasActiveSteps := false
-	for ch := 0; ch < numChannels; ch++ {
-		for step := 0; step < numSteps; step++ {
-			animValue := int(s.visualizerValues[ch][step])
-			if animValue > 0 { // Consider it active if animated value is above 0
-				if !hasActiveSteps {
-					minNote = animValue
-					maxNote = animValue
-					hasActiveSteps = true
-				} else {
-					if animValue < minNote {
-						minNote = animValue
-					}
-					if animValue > maxNote {
-						maxNote = animValue
-					}
-				}
-			}
-		}
-	}
-
-	// Add some padding to the range for better visualization
-	noteRange := maxNote - minNote
-	if noteRange == 0 {
-		// Default to one octave if all notes are the same
-		minNote -= notesPerOctave / 2
-		maxNote += notesPerOctave / 2
+	b.WriteString(titleStyle.Render("Signal Output") + " ")
+	if s.isPlaying {
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("● LIVE"))
 	} else {
-		padding := noteRange / 4
-		minNote -= padding
-		maxNote += padding
+		b.WriteString(helpStyle.Render("○ stopped"))
 	}
+	b.WriteString("\n")
 
-	// Clamp to valid MIDI range
-	if minNote < minMIDINote {
-		minNote = minMIDINote
-	}
-	if maxNote > maxMIDINote {
-		maxNote = maxMIDINote
-	}
-
-	// Map note values to graph Y positions (inverted: top is high notes)
-	noteToY := func(note int) int {
-		if maxNote == minNote {
-			return graphHeight / 2
-		}
-		// Invert so high notes are at top
-		normalized := float64(note-minNote) / float64(maxNote-minNote)
-		y := graphHeight - 1 - int(normalized*float64(graphHeight-1))
-		if y < 0 {
-			y = 0
-		}
-		if y >= graphHeight {
-			y = graphHeight - 1
-		}
-		return y
-	}
-
-	// Channel symbols for better visibility
-	channelSymbols := []rune{'█', '▓', '▒', '░'}
-
-	// Plot each channel's signal using animated values
+	// Draw each channel as a separate waveform row
 	for ch := 0; ch < numChannels; ch++ {
-		for step := 0; step < numSteps; step++ {
-			// Each step takes up 4 characters width
-			x := step * 4
+		// Channel label
+		chLabel := fmt.Sprintf("Ch%d ", ch+1)
+		b.WriteString(channelStyles[ch].Render(chLabel))
 
-			// Use the animated value from Harmonica
-			animValue := int(s.visualizerValues[ch][step])
-
-			if animValue > 0 {
-				// Active or animating: draw the signal at the animated value's voltage level
-				y := noteToY(animValue)
-
-				// Draw across all 4 positions for this step
-				for dx := 0; dx < 4 && x+dx < graphWidth; dx++ {
-					if grid[y][x+dx] == ' ' || grid[y][x+dx] == '·' {
-						grid[y][x+dx] = channelSymbols[ch]
-					}
-				}
-			} else {
-				// Inactive step: draw at zero/baseline (bottom of graph)
-				y := graphHeight - 1
-				for dx := 0; dx < 4 && x+dx < graphWidth; dx++ {
-					if grid[y][x+dx] == ' ' {
-						grid[y][x+dx] = '·'
-					}
-				}
-			}
-		}
-	}
-
-	// Render the grid from top to bottom
-	for y := 0; y < graphHeight; y++ {
+		// Draw the waveform for this channel
 		b.WriteString("│")
-
-		// Color each character based on which channel symbol it is
 		for x := 0; x < graphWidth; x++ {
-			char := grid[y][x] //nolint:gosec // y and x are bounded by graphHeight and graphWidth constants
-			colored := false
-
-			for ch := 0; ch < numChannels; ch++ {
-				if char == channelSymbols[ch] {
-					b.WriteString(channelStyles[ch].Render(string(char))) //nolint:gosec // ch is bounded by numChannels constant
-					colored = true
-					break
-				}
+			var level float64
+			if x < len(s.waveformHistory[ch]) {
+				level = s.waveformHistory[ch][x]
 			}
 
-			if !colored {
-				if char == ' ' {
-					b.WriteString(" ")
-				} else {
-					b.WriteString(helpStyle.Render(string(char)))
-				}
+			// Map level (0-1) to display character
+			// Use block characters to show amplitude
+			var char string
+			switch {
+			case level > 0.8:
+				char = "█"
+			case level > 0.6:
+				char = "▇"
+			case level > 0.4:
+				char = "▅"
+			case level > 0.2:
+				char = "▃"
+			case level > 0.05:
+				char = "▁"
+			default:
+				char = "·"
+			}
+
+			if level > 0.05 {
+				b.WriteString(channelStyles[ch].Render(char))
+			} else {
+				b.WriteString(dimStyle.Render(char))
 			}
 		}
 		b.WriteString("│\n")
 	}
 
-	// Bottom border with step markers
-	b.WriteString("└")
-	for i := 0; i < graphWidth; i++ {
-		if i%4 == 0 {
-			b.WriteString("┴")
-		} else {
-			b.WriteString("─")
-		}
-	}
+	// Bottom border
+	b.WriteString("    └")
+	b.WriteString(strings.Repeat("─", graphWidth))
 	b.WriteString("┘\n")
 
-	// Step numbers
-	b.WriteString(" ")
-	for step := 0; step < numSteps; step++ {
-		stepStr := fmt.Sprintf("%-4d", step+1)
-		if step == s.currentStep && s.isPlaying {
-			b.WriteString(selectedStyle.Render(stepStr))
-		} else {
-			b.WriteString(helpStyle.Render(stepStr))
-		}
-	}
+	// Time indicator
+	b.WriteString("     ")
+	b.WriteString(helpStyle.Render("← past"))
+	b.WriteString(strings.Repeat(" ", graphWidth-12))
+	b.WriteString(helpStyle.Render("now →"))
 	b.WriteString("\n")
-
-	// Legend showing channel colors and current notes
-	b.WriteString(" Legend: ")
-	for ch := 0; ch < numChannels; ch++ {
-		if ch > 0 {
-			b.WriteString(" │ ")
-		}
-		symbol := string(channelSymbols[ch])
-		// Show the first active note for this channel, or the cursor note if no active notes
-		displayNote := s.notes[ch][s.cursorX]
-		for step := 0; step < numSteps; step++ {
-			if s.steps[ch][step] {
-				displayNote = s.notes[ch][step]
-				break
-			}
-		}
-		noteName := midiNoteToName(displayNote)
-		b.WriteString(channelStyles[ch].Render(fmt.Sprintf("%s Ch%d:%s", symbol, ch+1, noteName))) //nolint:gosec // ch is bounded by numChannels constant
-	}
 
 	return b.String()
 }

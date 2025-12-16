@@ -103,47 +103,39 @@ func TestSignalVisualizer(t *testing.T) {
 		currentStep: 0,
 	}
 
-	// Initialize spring for testing
-	s.visualizerSpring = harmonica.NewSpring(harmonica.FPS(60), 6.0, 0.5)
+	// Initialize spring for waveform animation
+	s.waveformSpring = harmonica.NewSpring(harmonica.FPS(60), 8.0, 0.6)
 
-	// Set up some notes across channels to test visualization
-	// Channel 0: ascending pattern
+	// Initialize waveform history (64 samples per channel)
+	const historyLength = 64
+	for i := 0; i < numChannels; i++ {
+		s.waveformHistory[i] = make([]float64, historyLength)
+		s.currentLevels[i] = 0
+		s.levelVelocities[i] = 0
+	}
+
+	// Set up some notes across channels
 	s.steps[0][0] = true
 	s.steps[0][4] = true
-	s.steps[0][8] = true
-	s.steps[0][12] = true
-	s.notes[0][0] = 60  // C4
-	s.notes[0][4] = 64  // E4
-	s.notes[0][8] = 67  // G4
-	s.notes[0][12] = 72 // C5
-	// Initialize animation values for immediate display
-	s.visualizerValues[0][0] = 60
-	s.visualizerValues[0][4] = 64
-	s.visualizerValues[0][8] = 67
-	s.visualizerValues[0][12] = 72
+	s.notes[0][0] = 60 // C4
+	s.notes[0][4] = 64 // E4
 
-	// Channel 1: different pattern
 	s.steps[1][2] = true
-	s.steps[1][6] = true
 	s.notes[1][2] = 55 // G3
-	s.notes[1][6] = 62 // D4
-	s.visualizerValues[1][2] = 55
-	s.visualizerValues[1][6] = 62
 
-	// Channel 2: single note
-	s.steps[2][5] = true
-	s.notes[2][5] = 48 // C3
-	s.visualizerValues[2][5] = 48
+	// Simulate some waveform history with varying levels
+	for x := 0; x < historyLength; x++ {
+		// Channel 0: decaying signal
+		if x > 50 {
+			s.waveformHistory[0][x] = 0.8 * float64(historyLength-x) / float64(historyLength-50)
+		}
+		// Channel 1: spike in the middle
+		if x > 30 && x < 40 {
+			s.waveformHistory[1][x] = 0.6
+		}
+	}
 
-	// Channel 3: high notes
-	s.steps[3][1] = true
-	s.steps[3][9] = true
-	s.notes[3][1] = 84 // C6
-	s.notes[3][9] = 96 // C7
-	s.visualizerValues[3][1] = 84
-	s.visualizerValues[3][9] = 96
-
-	// Render the signal visualizer (pass pointer for animation state)
+	// Render the signal visualizer
 	output := renderSignalVisualizer(&s)
 
 	// Basic validation: check that output contains expected elements
@@ -152,13 +144,8 @@ func TestSignalVisualizer(t *testing.T) {
 	}
 
 	// Should contain the title
-	if !containsString(output, "Signal Visualizer") {
-		t.Error("Output should contain 'Signal Visualizer' title")
-	}
-
-	// Should contain legend with channel information
-	if !containsString(output, "Legend") {
-		t.Error("Output should contain legend")
+	if !containsString(output, "Signal Output") {
+		t.Error("Output should contain 'Signal Output' title")
 	}
 
 	// Should contain channel indicators
@@ -175,6 +162,11 @@ func TestSignalVisualizer(t *testing.T) {
 	}
 	if !containsString(output, "└") || !containsString(output, "┘") {
 		t.Error("Output should contain bottom graph borders")
+	}
+
+	// Should contain time indicators
+	if !containsString(output, "past") || !containsString(output, "now") {
+		t.Error("Output should contain time indicators")
 	}
 
 	fmt.Println("✓ Signal visualizer rendering works correctly!")

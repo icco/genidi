@@ -89,3 +89,95 @@ func TestMIDILoadingSavingWithPerStepNotes(t *testing.T) {
 
 	fmt.Println("✓ MIDI loading with per-step notes works correctly!")
 }
+
+func TestSignalVisualizer(t *testing.T) {
+	// Create a sequencer with test data
+	s := sequencerModel{
+		bpm:         120,
+		cursorX:     0,
+		cursorY:     0,
+		isPlaying:   false,
+		currentStep: 0,
+	}
+
+	// Set up some notes across channels to test visualization
+	// Channel 0: ascending pattern
+	s.steps[0][0] = true
+	s.steps[0][4] = true
+	s.steps[0][8] = true
+	s.steps[0][12] = true
+	s.notes[0][0] = 60  // C4
+	s.notes[0][4] = 64  // E4
+	s.notes[0][8] = 67  // G4
+	s.notes[0][12] = 72 // C5
+
+	// Channel 1: different pattern
+	s.steps[1][2] = true
+	s.steps[1][6] = true
+	s.notes[1][2] = 55 // G3
+	s.notes[1][6] = 62 // D4
+
+	// Channel 2: single note
+	s.steps[2][5] = true
+	s.notes[2][5] = 48 // C3
+
+	// Channel 3: high notes
+	s.steps[3][1] = true
+	s.steps[3][9] = true
+	s.notes[3][1] = 84  // C6
+	s.notes[3][9] = 96  // C7
+
+	// Render the signal visualizer
+	output := renderSignalVisualizer(s)
+
+	// Basic validation: check that output contains expected elements
+	if output == "" {
+		t.Error("Signal visualizer output should not be empty")
+	}
+
+	// Should contain the title
+	if !containsString(output, "Signal Visualizer") {
+		t.Error("Output should contain 'Signal Visualizer' title")
+	}
+
+	// Should contain legend with channel information
+	if !containsString(output, "Legend") {
+		t.Error("Output should contain legend")
+	}
+
+	// Should contain channel indicators
+	for i := 1; i <= 4; i++ {
+		chLabel := fmt.Sprintf("Ch%d", i)
+		if !containsString(output, chLabel) {
+			t.Errorf("Output should contain channel label %s", chLabel)
+		}
+	}
+
+	// Should contain graph borders
+	if !containsString(output, "│") {
+		t.Error("Output should contain vertical graph borders")
+	}
+	if !containsString(output, "└") || !containsString(output, "┘") {
+		t.Error("Output should contain bottom graph borders")
+	}
+
+	fmt.Println("✓ Signal visualizer rendering works correctly!")
+	// Print the actual output to verify visually
+	fmt.Println("\n--- Signal Visualizer Output ---")
+	fmt.Println(output)
+	fmt.Println("--- End Output ---")
+}
+
+// Helper function to check if a string contains a substring
+func containsString(s, substr string) bool {
+	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) >= len(substr) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || containsSubstring(s, substr)))
+}
+
+func containsSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

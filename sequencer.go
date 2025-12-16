@@ -416,6 +416,10 @@ func (m model) viewSequencer() string {
 		return m.viewPortSelection()
 	}
 
+	// Signal Visualizer - shows voltages/wave shapes for all 4 channels
+	signalViz := renderSignalVisualizer(s)
+	b.WriteString(signalViz + "\n\n")
+
 	// Clock visualization
 	clockBar := renderClockBar(s.bpm, s.isPlaying, s.currentStep)
 	b.WriteString(clockBar + "\n\n")
@@ -529,6 +533,190 @@ func (m model) viewPortSelection() string {
 
 	b.WriteString("\n" + helpStyle.Render("↑/k: up • ↓/j: down • enter: select • r: refresh • q/esc: cancel"))
 
+	return b.String()
+}
+
+// renderSignalVisualizer creates a visual representation of the signal/voltage output
+// for all 4 channels, showing the wave shape as a graph with 4 lines
+func renderSignalVisualizer(s sequencerModel) string {
+	const graphHeight = 8  // Height of the graph in lines
+	const graphWidth = 64  // Width of the graph (4 chars per step)
+	
+	var b strings.Builder
+	
+	// Channel colors for visualization
+	channelColors := []string{"#FF6B6B", "#4ECDC4", "#FFD93D", "#95E1D3"}
+	channelStyles := make([]lipgloss.Style, numChannels)
+	for i := 0; i < numChannels; i++ {
+		channelStyles[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(channelColors[i]))
+	}
+	
+	b.WriteString(titleStyle.Render("Signal Visualizer") + " ")
+	b.WriteString(helpStyle.Render("(4 channels)") + "\n")
+	
+	// Create a 2D grid to represent the graph
+	// Each row represents a voltage level, each column represents a step position
+	grid := make([][]rune, graphHeight)
+	for i := range grid {
+		grid[i] = make([]rune, graphWidth)
+		for j := range grid[i] {
+			grid[i][j] = ' '
+		}
+	}
+	
+	// Calculate the MIDI note range across all active steps
+	minNote, maxNote := 0, 127
+	hasActiveSteps := false
+	for ch := 0; ch < numChannels; ch++ {
+		for step := 0; step < numSteps; step++ {
+			if s.steps[ch][step] {
+				if !hasActiveSteps {
+					minNote = s.notes[ch][step]
+					maxNote = s.notes[ch][step]
+					hasActiveSteps = true
+				} else {
+					if s.notes[ch][step] < minNote {
+						minNote = s.notes[ch][step]
+					}
+					if s.notes[ch][step] > maxNote {
+						maxNote = s.notes[ch][step]
+					}
+				}
+			}
+		}
+	}
+	
+	// Add some padding to the range for better visualization
+	noteRange := maxNote - minNote
+	if noteRange == 0 {
+		noteRange = 12 // Default to one octave if all notes are the same
+		minNote -= 6
+		maxNote += 6
+	} else {
+		padding := noteRange / 4
+		minNote -= padding
+		maxNote += padding
+	}
+	
+	// Clamp to valid MIDI range
+	if minNote < 0 {
+		minNote = 0
+	}
+	if maxNote > 127 {
+		maxNote = 127
+	}
+	
+	// Map note values to graph Y positions (inverted: top is high notes)
+	noteToY := func(note int) int {
+		if maxNote == minNote {
+			return graphHeight / 2
+		}
+		// Invert so high notes are at top
+		normalized := float64(note-minNote) / float64(maxNote-minNote)
+		y := graphHeight - 1 - int(normalized*float64(graphHeight-1))
+		if y < 0 {
+			y = 0
+		}
+		if y >= graphHeight {
+			y = graphHeight - 1
+		}
+		return y
+	}
+	
+	// Channel symbols for better visibility
+	channelSymbols := []rune{'█', '▓', '▒', '░'}
+	
+	// Plot each channel's signal
+	for ch := 0; ch < numChannels; ch++ {
+		for step := 0; step < numSteps; step++ {
+			// Each step takes up 4 characters width
+			x := step * 4
+			
+			if s.steps[ch][step] {
+				// Active step: draw the signal at the note's voltage level
+				note := s.notes[ch][step]
+				y := noteToY(note)
+				
+				// Draw across all 4 positions for this step
+				for dx := 0; dx < 4 && x+dx < graphWidth; dx++ {
+					if grid[y][x+dx] == ' ' || grid[y][x+dx] == '·' {
+						grid[y][x+dx] = channelSymbols[ch]
+					}
+				}
+			} else {
+				// Inactive step: draw at zero/baseline (middle or bottom)
+				y := graphHeight - 1 // Bottom of graph for inactive
+				for dx := 0; dx < 4 && x+dx < graphWidth; dx++ {
+					if grid[y][x+dx] == ' ' {
+						grid[y][x+dx] = '·'
+					}
+				}
+			}
+		}
+	}
+	
+	// Render the grid from top to bottom
+	for y := 0; y < graphHeight; y++ {
+		b.WriteString("│")
+		
+		// Color each character based on which channel symbol it is
+		for x := 0; x < graphWidth; x++ {
+			char := grid[y][x]
+			colored := false
+			
+			for ch := 0; ch < numChannels; ch++ {
+				if char == channelSymbols[ch] {
+					b.WriteString(channelStyles[ch].Render(string(char)))
+					colored = true
+					break
+				}
+			}
+			
+			if !colored {
+				if char == ' ' {
+					b.WriteString(" ")
+				} else {
+					b.WriteString(helpStyle.Render(string(char)))
+				}
+			}
+		}
+		b.WriteString("│\n")
+	}
+	
+	// Bottom border with step markers
+	b.WriteString("└")
+	for i := 0; i < graphWidth; i++ {
+		if i%4 == 0 {
+			b.WriteString("┴")
+		} else {
+			b.WriteString("─")
+		}
+	}
+	b.WriteString("┘\n")
+	
+	// Step numbers
+	b.WriteString(" ")
+	for step := 0; step < numSteps; step++ {
+		stepStr := fmt.Sprintf("%-4d", step+1)
+		if step == s.currentStep && s.isPlaying {
+			b.WriteString(selectedStyle.Render(stepStr))
+		} else {
+			b.WriteString(helpStyle.Render(stepStr))
+		}
+	}
+	b.WriteString("\n")
+	
+	// Legend showing channel colors and current notes
+	b.WriteString(" Legend: ")
+	for ch := 0; ch < numChannels; ch++ {
+		if ch > 0 {
+			b.WriteString(" │ ")
+		}
+		symbol := string(channelSymbols[ch])
+		noteName := midiNoteToName(s.notes[ch][s.cursorX])
+		b.WriteString(channelStyles[ch].Render(fmt.Sprintf("%s Ch%d:%s", symbol, ch+1, noteName)))
+	}
+	
 	return b.String()
 }
 

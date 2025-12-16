@@ -103,8 +103,8 @@ func TestSignalVisualizer(t *testing.T) {
 		currentStep: 0,
 	}
 
-	// Initialize spring for waveform animation
-	s.waveformSpring = harmonica.NewSpring(harmonica.FPS(60), 8.0, 0.6)
+	// Initialize spring for waveform animation (slower decay, less bouncy)
+	s.waveformSpring = harmonica.NewSpring(harmonica.FPS(60), 3.0, 0.8)
 
 	// Initialize waveform history (64 samples per channel)
 	const historyLength = 64

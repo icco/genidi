@@ -109,8 +109,8 @@ func (s *sequencerModel) sendNoteOn(channel, note, velocity uint8) {
 	if s.sendFunc != nil {
 		_ = s.sendFunc(midi.NoteOn(channel, note, velocity))
 	}
-	// Trigger visualization regardless of MIDI output
-	s.triggerNoteVisualization(int(channel), float64(velocity))
+	// Trigger visualization regardless of MIDI output - uses note pitch and velocity
+	s.triggerNoteVisualization(int(channel), int(note), float64(velocity))
 }
 
 func (s *sequencerModel) sendNoteOff(channel, note uint8) {
@@ -143,8 +143,8 @@ func (s *sequencerModel) createNewMIDI(path string) error {
 	s.refreshMIDIPorts()
 
 	// Initialize spring animation for smooth level decay
-	// FPS(60) sets 60 fps, 8.0 is angular frequency (faster decay), 0.6 is damping ratio
-	s.waveformSpring = harmonica.NewSpring(harmonica.FPS(60), 8.0, 0.6)
+	// FPS(60) sets 60 fps, 3.0 is angular frequency (slower decay), 0.8 is damping ratio (less bouncy)
+	s.waveformSpring = harmonica.NewSpring(harmonica.FPS(60), 3.0, 0.8)
 
 	// Initialize waveform history (64 samples per channel for display width)
 	const historyLength = 64
@@ -181,7 +181,8 @@ func (s *sequencerModel) loadMIDI(path string) error {
 	s.refreshMIDIPorts()
 
 	// Initialize spring animation for smooth level decay
-	s.waveformSpring = harmonica.NewSpring(harmonica.FPS(60), 8.0, 0.6)
+	// FPS(60) sets 60 fps, 3.0 is angular frequency (slower decay), 0.8 is damping ratio (less bouncy)
+	s.waveformSpring = harmonica.NewSpring(harmonica.FPS(60), 3.0, 0.8)
 
 	// Initialize waveform history (64 samples per channel for display width)
 	const historyLength = 64
@@ -606,12 +607,24 @@ func (s *sequencerModel) updateVisualizerAnimation() {
 }
 
 // triggerNoteVisualization is called when a note is played to spike the visualizer
-func (s *sequencerModel) triggerNoteVisualization(channel int, velocity float64) {
+func (s *sequencerModel) triggerNoteVisualization(channel int, note int, velocity float64) {
 	if channel >= 0 && channel < numChannels {
-		// Set current level to velocity (0-1 range, normalized from MIDI 0-127)
-		s.currentLevels[channel] = velocity / 127.0
+		// Normalize note to 0-1 range (MIDI notes 0-127, but typical range is 36-96)
+		// Map note pitch to level: higher notes = higher level
+		noteNormalized := float64(note-36) / 60.0 // Maps ~C2-C7 to 0-1
+		if noteNormalized < 0.1 {
+			noteNormalized = 0.1
+		}
+		if noteNormalized > 1.0 {
+			noteNormalized = 1.0
+		}
+
+		// Combine note pitch with velocity for final level
+		velocityNormalized := velocity / 127.0
+		s.currentLevels[channel] = noteNormalized * velocityNormalized
+
 		// Give it some initial upward velocity for a nice attack
-		s.levelVelocities[channel] = 2.0
+		s.levelVelocities[channel] = 1.5
 	}
 }
 

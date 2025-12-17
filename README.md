@@ -1,6 +1,6 @@
 # genidi
 
-A TUI (Terminal User Interface) MIDI generator and sequencer built with [Bubbletea](https://github.com/charmbracelet/bubbletea) and [Harmonica](https://github.com/charmbracelet/harmonica).
+A TUI (Terminal User Interface) MIDI generator and sequencer built with [Bubbletea](https://github.com/charmbracelet/bubbletea).
 
 ## Features
 

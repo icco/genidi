@@ -11,7 +11,7 @@ A TUI (Terminal User Interface) MIDI generator and sequencer built with [Bubblet
   - Toggle steps on/off for each channel
   - Adjust BPM (tempo) in real-time
   - Change MIDI notes per channel
-  - Create, open, and delete MIDI files
+  - Create and open MIDI files
 - **Keyboard-driven**: Fully navigable with keyboard shortcuts
 
 ## Installation
@@ -44,7 +44,6 @@ Navigate and manage your MIDI files:
 - `↓/j`: Move cursor down
 - `Enter`: Open directory or MIDI file
 - `n`: Create a new MIDI file
-- `d`: Delete selected MIDI file
 - `q`: Quit application
 
 ### Sequencer Mode
@@ -78,7 +77,6 @@ Generated MIDI files use:
 
 - [Bubbletea](https://github.com/charmbracelet/bubbletea) - TUI framework
 - [Lipgloss](https://github.com/charmbracelet/lipgloss) - Style and layout
-- [Harmonica](https://github.com/charmbracelet/harmonica) - Animation and physics
 - [gomidi](https://gitlab.com/gomidi/midi) - MIDI file handling
 
 ## License

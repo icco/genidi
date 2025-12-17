@@ -6,7 +6,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/harmonica"
 	"github.com/charmbracelet/lipgloss"
 	"gitlab.com/gomidi/midi/v2"
 	"gitlab.com/gomidi/midi/v2/drivers"
@@ -44,11 +43,6 @@ type sequencerModel struct {
 	sendFunc      func(msg midi.Message) error // Function to send MIDI
 	selectingPort bool                         // Whether we're in port selection mode
 
-	// Animation state for signal visualizer - shows output waveform over time
-	waveformHistory [numChannels][]float64 // Rolling history of output levels per channel
-	waveformSpring  harmonica.Spring       // Spring for smooth decay
-	currentLevels   [numChannels]float64   // Current output level per channel
-	levelVelocities [numChannels]float64   // Spring velocities for decay
 }
 
 func (s *sequencerModel) refreshMIDIPorts() {
@@ -109,8 +103,6 @@ func (s *sequencerModel) sendNoteOn(channel, note, velocity uint8) {
 	if s.sendFunc != nil {
 		_ = s.sendFunc(midi.NoteOn(channel, note, velocity))
 	}
-	// Trigger visualization regardless of MIDI output - uses note pitch and velocity
-	s.triggerNoteVisualization(int(channel), int(note), float64(velocity))
 }
 
 func (s *sequencerModel) sendNoteOff(channel, note uint8) {
@@ -142,18 +134,6 @@ func (s *sequencerModel) createNewMIDI(path string) error {
 	// Refresh available MIDI ports
 	s.refreshMIDIPorts()
 
-	// Initialize spring animation for smooth level decay
-	// FPS(60) sets 60 fps, 3.0 is angular frequency (slower decay), 0.8 is damping ratio (less bouncy)
-	s.waveformSpring = harmonica.NewSpring(harmonica.FPS(60), 3.0, 0.8)
-
-	// Initialize waveform history (64 samples per channel for display width)
-	const historyLength = 64
-	for i := 0; i < numChannels; i++ {
-		s.waveformHistory[i] = make([]float64, historyLength)
-		s.currentLevels[i] = 0
-		s.levelVelocities[i] = 0
-	}
-
 	// Initialize with default notes (C4, D4, E4, F4) for each step
 	defaultNotes := [numChannels]int{60, 62, 64, 65}
 	for i := 0; i < numChannels; i++ {
@@ -179,18 +159,6 @@ func (s *sequencerModel) loadMIDI(path string) error {
 
 	// Refresh available MIDI ports
 	s.refreshMIDIPorts()
-
-	// Initialize spring animation for smooth level decay
-	// FPS(60) sets 60 fps, 3.0 is angular frequency (slower decay), 0.8 is damping ratio (less bouncy)
-	s.waveformSpring = harmonica.NewSpring(harmonica.FPS(60), 3.0, 0.8)
-
-	// Initialize waveform history (64 samples per channel for display width)
-	const historyLength = 64
-	for i := 0; i < numChannels; i++ {
-		s.waveformHistory[i] = make([]float64, historyLength)
-		s.currentLevels[i] = 0
-		s.levelVelocities[i] = 0
-	}
 
 	// Initialize with default notes
 	defaultNotes := [numChannels]int{60, 62, 64, 65}
@@ -454,11 +422,6 @@ func (m model) viewSequencer() string {
 		return m.viewPortSelection()
 	}
 
-	// Signal Visualizer - shows voltages/wave shapes for all 4 channels
-	// Pass pointer to allow Harmonica animation state updates
-	signalViz := renderSignalVisualizer(&m.sequencer)
-	b.WriteString(signalViz + "\n\n")
-
 	// Clock visualization
 	clockBar := renderClockBar(s.bpm, s.isPlaying, s.currentStep)
 	b.WriteString(clockBar + "\n\n")
@@ -572,138 +535,6 @@ func (m model) viewPortSelection() string {
 	}
 
 	b.WriteString("\n" + helpStyle.Render("↑/k: up • ↓/j: down • enter: select • r: refresh • q/esc: cancel"))
-
-	return b.String()
-}
-
-// updateVisualizerAnimation updates the waveform display based on current playback
-// This must be called from Update(), not View(), so state changes persist
-func (s *sequencerModel) updateVisualizerAnimation() {
-	const historyLength = 64
-
-	// Ensure history is initialized
-	for ch := 0; ch < numChannels; ch++ {
-		if len(s.waveformHistory[ch]) == 0 {
-			s.waveformHistory[ch] = make([]float64, historyLength)
-		}
-	}
-
-	// Update current levels with spring decay toward 0
-	for ch := 0; ch < numChannels; ch++ {
-		s.currentLevels[ch], s.levelVelocities[ch] = s.waveformSpring.Update(
-			s.currentLevels[ch],
-			s.levelVelocities[ch],
-			0, // Always decay toward 0
-		)
-	}
-
-	// Shift history left and add current levels
-	for ch := 0; ch < numChannels; ch++ {
-		// Shift all values left by 1
-		copy(s.waveformHistory[ch], s.waveformHistory[ch][1:])
-		// Add current level at the end (rightmost = newest)
-		s.waveformHistory[ch][historyLength-1] = s.currentLevels[ch]
-	}
-}
-
-// triggerNoteVisualization is called when a note is played to spike the visualizer
-func (s *sequencerModel) triggerNoteVisualization(channel int, note int, velocity float64) {
-	if channel >= 0 && channel < numChannels {
-		// Normalize note to 0-1 range (MIDI notes 0-127, but typical range is 36-96)
-		// Map note pitch to level: higher notes = higher level
-		noteNormalized := float64(note-36) / 60.0 // Maps ~C2-C7 to 0-1
-		if noteNormalized < 0.1 {
-			noteNormalized = 0.1
-		}
-		if noteNormalized > 1.0 {
-			noteNormalized = 1.0
-		}
-
-		// Combine note pitch with velocity for final level
-		velocityNormalized := velocity / 127.0
-		s.currentLevels[channel] = noteNormalized * velocityNormalized
-
-		// Give it some initial upward velocity for a nice attack
-		s.levelVelocities[channel] = 1.5
-	}
-}
-
-// renderSignalVisualizer creates an oscilloscope-style display showing output waveforms over time
-func renderSignalVisualizer(s *sequencerModel) string {
-	const graphWidth = 64 // Width of the display (matches history length)
-
-	var b strings.Builder
-
-	// Channel colors for visualization
-	channelColors := []string{"#FF6B6B", "#4ECDC4", "#FFD93D", "#95E1D3"}
-	channelStyles := make([]lipgloss.Style, numChannels)
-	for i := 0; i < numChannels; i++ {
-		channelStyles[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(channelColors[i]))
-	}
-
-	// Dim style for baseline
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#333333"))
-
-	b.WriteString(titleStyle.Render("Signal Output") + " ")
-	if s.isPlaying {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Render("● LIVE"))
-	} else {
-		b.WriteString(helpStyle.Render("○ stopped"))
-	}
-	b.WriteString("\n")
-
-	// Draw each channel as a separate waveform row
-	for ch := 0; ch < numChannels; ch++ {
-		// Channel label
-		chLabel := fmt.Sprintf("Ch%d ", ch+1)
-		b.WriteString(channelStyles[ch].Render(chLabel))
-
-		// Draw the waveform for this channel
-		b.WriteString("│")
-		for x := 0; x < graphWidth; x++ {
-			var level float64
-			if x < len(s.waveformHistory[ch]) {
-				level = s.waveformHistory[ch][x]
-			}
-
-			// Map level (0-1) to display character
-			// Use block characters to show amplitude
-			var char string
-			switch {
-			case level > 0.8:
-				char = "█"
-			case level > 0.6:
-				char = "▇"
-			case level > 0.4:
-				char = "▅"
-			case level > 0.2:
-				char = "▃"
-			case level > 0.05:
-				char = "▁"
-			default:
-				char = "·"
-			}
-
-			if level > 0.05 {
-				b.WriteString(channelStyles[ch].Render(char))
-			} else {
-				b.WriteString(dimStyle.Render(char))
-			}
-		}
-		b.WriteString("│\n")
-	}
-
-	// Bottom border
-	b.WriteString("    └")
-	b.WriteString(strings.Repeat("─", graphWidth))
-	b.WriteString("┘\n")
-
-	// Time indicator
-	b.WriteString("     ")
-	b.WriteString(helpStyle.Render("← past"))
-	b.WriteString(strings.Repeat(" ", graphWidth-12))
-	b.WriteString(helpStyle.Render("now →"))
-	b.WriteString("\n")
 
 	return b.String()
 }

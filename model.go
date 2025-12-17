@@ -188,9 +188,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Update visualizer animation state (must happen in Update, not View)
 		if m.mode == sequencerMode {
-			m.sequencer.updateVisualizerAnimation()
 			return m, tick()
 		}
 		return m, nil
@@ -283,21 +281,6 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = sequencerMode
 			return m, tick() // Start ticks for visualizer animation
 		}
-	case "d":
-		// Delete selected file
-		if len(fb.files) > 0 {
-			selected := fb.files[fb.cursor]
-			if !selected.isDir && selected.name != ".." {
-				err := os.Remove(selected.path)
-				if err != nil {
-					fb.message = fmt.Sprintf("Error deleting: %v", err)
-				} else {
-					fb.message = fmt.Sprintf("Deleted %s", selected.name)
-					fb.loadFiles()
-					fb.adjustViewportBounds()
-				}
-			}
-		}
 	}
 
 	return m, nil
@@ -367,7 +350,7 @@ func (m model) viewFileBrowser() string {
 		s += errorStyle.Render(fb.message) + "\n"
 	}
 
-	s += "\n" + helpStyle.Render("↑/k: up • ↓/j: down • enter: open • n: new MIDI • d: delete • q: quit")
+	s += "\n" + helpStyle.Render("↑/k: up • ↓/j: down • enter: open • n: new MIDI • q: quit")
 
 	return s
 }

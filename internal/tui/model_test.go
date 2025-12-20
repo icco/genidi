@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"fmt"
@@ -28,7 +28,7 @@ func TestFileBrowserViewport(t *testing.T) {
 	}
 
 	// Create a model with the test directory
-	m := initialModel()
+	m := InitialModel()
 	m.fileBrowser.currentDir = testDir
 	m.fileBrowser.loadFiles()
 	m.height = 20 // Simulate a terminal height

@@ -30,10 +30,20 @@ go build -o genidi
 
 ## Usage
 
-Run the application:
+genidi supports multiple modes of operation through subcommands.
+
+### Manual Mode
+
+Start the manual MIDI sequencer with an interactive TUI:
 
 ```bash
-./genidi
+./genidi manual
+```
+
+To see all available commands:
+
+```bash
+./genidi --help
 ```
 
 ### File Browser Mode
@@ -61,8 +71,12 @@ Edit your MIDI sequence:
 ## Architecture
 
 - **main.go**: Application entry point
-- **model.go**: Core application state and file browser implementation
-- **sequencer.go**: MIDI sequencer logic and visualization
+- **cmd/**: Command-line interface using Cobra
+  - **root.go**: Root command definition
+  - **manual.go**: Manual mode command
+- **internal/tui/**: TUI implementation
+  - **model.go**: Core application state and file browser implementation
+  - **sequencer.go**: MIDI sequencer logic and visualization
 
 ## MIDI Format
 
@@ -78,6 +92,7 @@ Generated MIDI files use:
 - [Bubbletea](https://github.com/charmbracelet/bubbletea) - TUI framework
 - [Lipgloss](https://github.com/charmbracelet/lipgloss) - Style and layout
 - [gomidi](https://gitlab.com/gomidi/midi) - MIDI file handling
+- [Cobra](https://github.com/spf13/cobra) - CLI framework
 
 ## License
 

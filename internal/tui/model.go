@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"fmt"
@@ -81,7 +81,7 @@ var (
 			Foreground(lipgloss.Color("#00FF00"))
 )
 
-func initialModel() model {
+func InitialModel() model {
 	currentDir, err := os.Getwd()
 	if err != nil {
 		currentDir = "."

@@ -11,7 +11,9 @@ tasks:
     cmds:
       - CGO_CXXFLAGS="-Wno-vla-cxx-extension" go build -o genidi .
     sources:
-      - '**/*.go'
+      - main.go
+      - cmd/*.go
+      - internal/**/*.go
     generates:
       - genidi
 

@@ -366,6 +366,12 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		s.isPlaying = !s.isPlaying
 		if s.isPlaying {
 			s.currentStep = 0
+			// Play notes at step 0 immediately
+			for ch := 0; ch < numChannels; ch++ {
+				if s.steps[ch][0] {
+					s.sendNoteOn(uint8(ch), uint8(s.notes[ch][0]), 100) //nolint:gosec
+				}
+			}
 			return m, tickWithBPM(s.bpm)
 		} else {
 			// Stop all notes when stopping playback
@@ -433,8 +439,9 @@ func (m model) viewSequencer() string {
 	// 14 chars to match data rows: 8 for channel + 6 for note
 	b.WriteString("Chan    Note  ")
 	hexDigits := "0123456789ABCDEF"
+	headerStyle := lipgloss.NewStyle().Width(3).Align(lipgloss.Center).Foreground(lipgloss.Color("#888888"))
 	for i := 0; i < numSteps; i++ {
-		b.WriteString(fmt.Sprintf(" %c ", hexDigits[i]))
+		b.WriteString(headerStyle.Render(string(hexDigits[i])))
 	}
 	b.WriteString("\n")
 
@@ -460,13 +467,13 @@ func (m model) viewSequencer() string {
 			// Determine cell content
 			var cell string
 			if s.steps[ch][step] {
-				cell = " ● "
+				cell = "●"
 			} else {
-				cell = " · "
+				cell = "·"
 			}
 
-			// Apply styling with fixed width
-			cellStyle := lipgloss.NewStyle().Width(3)
+			// Apply styling with fixed width and center alignment
+			cellStyle := lipgloss.NewStyle().Width(3).Align(lipgloss.Center)
 
 			// Highlight current cursor position
 			if ch == s.cursorY && step == s.cursorX {
@@ -558,25 +565,29 @@ func renderClockBar(bpm int, isPlaying bool, currentStep int) string {
 	// Each step is 3 characters wide to match the grid
 	for i := 0; i < numSteps; i++ {
 		var cell string
-		var cellStyle lipgloss.Style
+		// Use Width(3) to ensure consistent alignment with the step grid
+		cellStyle := lipgloss.NewStyle().Width(3)
 
 		if isPlaying && i == currentStep {
 			// Current playing position - bright indicator
-			cell = " ▶ "
-			cellStyle = lipgloss.NewStyle().
+			cell = "▶"
+			cellStyle = cellStyle.
 				Foreground(lipgloss.Color("#FFFFFF")).
 				Background(lipgloss.Color(colors[i])).
-				Bold(true)
+				Bold(true).
+				Align(lipgloss.Center)
 		} else if isPlaying && i < currentStep {
 			// Already played - filled with color
-			cell = " █ "
-			cellStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(colors[i]))
+			cell = "█"
+			cellStyle = cellStyle.
+				Foreground(lipgloss.Color(colors[i])).
+				Align(lipgloss.Center)
 		} else {
 			// Not yet played or stopped - dim
-			cell = " · "
-			cellStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#444444"))
+			cell = "·"
+			cellStyle = cellStyle.
+				Foreground(lipgloss.Color("#444444")).
+				Align(lipgloss.Center)
 		}
 
 		bar.WriteString(cellStyle.Render(cell))

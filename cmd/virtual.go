@@ -64,8 +64,8 @@ type virtualModel struct {
 	deviceName     string
 	synth          *audio.Synth
 	driver         *rtmididrv.Driver
-	inPort         drivers.In
-	stopFunc       func()
+	inPorts        [4]drivers.In   // Four virtual MIDI input ports
+	stopFuncs      [4]func()       // Stop functions for each port
 	activeNotes    map[string]noteDisplay // channel:note -> display info
 	lastMessage    string
 	messageHistory []string // Historical log of MIDI messages
@@ -119,26 +119,37 @@ func (m *virtualModel) initMIDI() tea.Msg {
 		return initResultMsg{err: fmt.Errorf("failed to initialize MIDI driver: %w", err)}
 	}
 
-	// Create a virtual MIDI input port that other apps can send to
-	inPort, err := driver.OpenVirtualIn(m.deviceName)
-	if err != nil {
-		driver.Close()
-		synth.Close()
-		return initResultMsg{err: fmt.Errorf("failed to create virtual MIDI port: %w", err)}
+	// Create four virtual MIDI input ports, one for each channel
+	var inPorts [4]drivers.In
+	for i := 0; i < 4; i++ {
+		portName := fmt.Sprintf("%s Ch%d", m.deviceName, i+1)
+		port, err := driver.OpenVirtualIn(portName)
+		if err != nil {
+			// Clean up any ports we already opened
+			for j := 0; j < i; j++ {
+				if inPorts[j] != nil {
+					inPorts[j].Close()
+				}
+			}
+			driver.Close()
+			synth.Close()
+			return initResultMsg{err: fmt.Errorf("failed to create virtual MIDI port %d: %w", i+1, err)}
+		}
+		inPorts[i] = port
 	}
 
 	return initResultMsg{
-		synth:  synth,
-		driver: driver,
-		inPort: inPort,
+		synth:   synth,
+		driver:  driver,
+		inPorts: inPorts,
 	}
 }
 
 type initResultMsg struct {
-	synth  *audio.Synth
-	driver *rtmididrv.Driver
-	inPort drivers.In
-	err    error
+	synth   *audio.Synth
+	driver  *rtmididrv.Driver
+	inPorts [4]drivers.In
+	err     error
 }
 
 func (m *virtualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -155,9 +166,9 @@ func (m *virtualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.synth = msg.synth
 		m.driver = msg.driver
-		m.inPort = msg.inPort
+		m.inPorts = msg.inPorts
 
-		// Start listening for MIDI messages
+		// Start listening for MIDI messages on all ports
 		return m, m.listenMIDI
 
 	case midiEventMsg:
@@ -176,93 +187,104 @@ func (m *virtualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *virtualModel) listenMIDI() tea.Msg {
-	if m.inPort == nil {
-		return nil
-	}
-
-	// Use the driver's Listen method to receive MIDI messages
-	stop, err := m.inPort.Listen(func(data []byte, timestamp int32) {
-		if len(data) < 1 {
-			return
+	// Start listening on all four ports
+	var portNames []string
+	for portIdx := 0; portIdx < 4; portIdx++ {
+		if m.inPorts[portIdx] == nil {
+			continue
 		}
 
-		status := data[0]
-		msgType := status & 0xF0
-		channel := status & 0x0F
+		// Capture portIdx for the closure (maps port to channel)
+		channelForPort := uint8(portIdx)
+		port := m.inPorts[portIdx]
 
-		switch msgType {
-		case 0x90: // Note On
-			if len(data) >= 3 {
-				note := data[1]
-				velocity := data[2]
-				// Play the note through synth
-				if m.synth != nil {
-					if velocity > 0 {
-						m.synth.NoteOn(channel, note, velocity)
-					} else {
-						m.synth.NoteOff(channel, note)
+		// Use the driver's Listen method to receive MIDI messages
+		stop, err := port.Listen(func(data []byte, timestamp int32) {
+			if len(data) < 1 {
+				return
+			}
+
+			status := data[0]
+			msgType := status & 0xF0
+			// Override the channel from the message with the port's designated channel
+			channel := channelForPort
+
+			switch msgType {
+			case 0x90: // Note On
+				if len(data) >= 3 {
+					note := data[1]
+					velocity := data[2]
+					// Play the note through synth
+					if m.synth != nil {
+						if velocity > 0 {
+							m.synth.NoteOn(channel, note, velocity)
+						} else {
+							m.synth.NoteOff(channel, note)
+						}
+					}
+					// Send message to update UI
+					if m.program != nil {
+						m.program.Send(midiEventMsg{
+							msgType:  "noteOn",
+							channel:  channel,
+							note:     note,
+							velocity: velocity,
+						})
 					}
 				}
-				// Send message to update UI
+			case 0x80: // Note Off
+				if len(data) >= 3 {
+					note := data[1]
+					if m.synth != nil {
+						m.synth.NoteOff(channel, note)
+					}
+					// Send message to update UI
+					if m.program != nil {
+						m.program.Send(midiEventMsg{
+							msgType: "noteOff",
+							channel: channel,
+							note:    note,
+						})
+					}
+				}
+			case 0xB0: // Control Change
+				if len(data) >= 3 {
+					controller := data[1]
+					value := data[2]
+					// Handle all notes off (CC 123)
+					if controller == 123 && m.synth != nil {
+						m.synth.AllNotesOff()
+					}
+					// Send message to update UI
+					if m.program != nil {
+						m.program.Send(midiEventMsg{
+							msgType:    "cc",
+							channel:    channel,
+							controller: controller,
+							value:      value,
+						})
+					}
+				}
+			case 0xE0: // Pitch Bend
 				if m.program != nil {
 					m.program.Send(midiEventMsg{
-						msgType:  "noteOn",
-						channel:  channel,
-						note:     note,
-						velocity: velocity,
-					})
-				}
-			}
-		case 0x80: // Note Off
-			if len(data) >= 3 {
-				note := data[1]
-				if m.synth != nil {
-					m.synth.NoteOff(channel, note)
-				}
-				// Send message to update UI
-				if m.program != nil {
-					m.program.Send(midiEventMsg{
-						msgType: "noteOff",
+						msgType: "pitchBend",
 						channel: channel,
-						note:    note,
 					})
 				}
 			}
-		case 0xB0: // Control Change
-			if len(data) >= 3 {
-				controller := data[1]
-				value := data[2]
-				// Handle all notes off (CC 123)
-				if controller == 123 && m.synth != nil {
-					m.synth.AllNotesOff()
-				}
-				// Send message to update UI
-				if m.program != nil {
-					m.program.Send(midiEventMsg{
-						msgType:    "cc",
-						channel:    channel,
-						controller: controller,
-						value:      value,
-					})
-				}
-			}
-		case 0xE0: // Pitch Bend
-			if m.program != nil {
-				m.program.Send(midiEventMsg{
-					msgType: "pitchBend",
-					channel: channel,
-				})
-			}
-		}
-	}, drivers.ListenConfig{})
+		}, drivers.ListenConfig{})
 
-	if err != nil {
-		m.err = fmt.Errorf("failed to listen to MIDI: %w", err)
-	} else {
-		m.stopFunc = stop
-		m.lastMessage = fmt.Sprintf("Listening on: %s", m.inPort.String())
+		if err != nil {
+			m.err = fmt.Errorf("failed to listen to MIDI port %d: %w", portIdx+1, err)
+			return nil
+		}
+
+		m.stopFuncs[portIdx] = stop
+		portNames = append(portNames, port.String())
 	}
 
+	m.lastMessage = fmt.Sprintf("Listening on: %s", strings.Join(portNames, ", "))
 	return nil
 }
 
@@ -313,11 +335,17 @@ func (m *virtualModel) handleMIDIEvent(msg midiEventMsg) {
 }
 
 func (m *virtualModel) cleanup() tea.Msg {
-	if m.stopFunc != nil {
-		m.stopFunc()
+	// Stop all listeners
+	for i := 0; i < 4; i++ {
+		if m.stopFuncs[i] != nil {
+			m.stopFuncs[i]()
+		}
 	}
-	if m.inPort != nil {
-		m.inPort.Close()
+	// Close all ports
+	for i := 0; i < 4; i++ {
+		if m.inPorts[i] != nil {
+			m.inPorts[i].Close()
+		}
 	}
 	if m.driver != nil {
 		m.driver.Close()
@@ -369,10 +397,24 @@ func (m *virtualModel) View() string {
 	// Device info
 	b.WriteString(subtitleStyle.Render("Device Name: ") + m.deviceName + "\n")
 
-	if m.inPort != nil {
-		b.WriteString(subtitleStyle.Render("MIDI Port: ") + statusStyle.Render(m.inPort.String()) + "\n\n")
+	// Show all four ports
+	hasAnyPort := false
+	for i := 0; i < 4; i++ {
+		if m.inPorts[i] != nil {
+			hasAnyPort = true
+			break
+		}
+	}
+	if hasAnyPort {
+		b.WriteString(subtitleStyle.Render("MIDI Ports:") + "\n")
+		for i := 0; i < 4; i++ {
+			if m.inPorts[i] != nil {
+				b.WriteString(fmt.Sprintf("  Ch%d: %s\n", i+1, statusStyle.Render(m.inPorts[i].String())))
+			}
+		}
+		b.WriteString("\n")
 	} else {
-		b.WriteString(subtitleStyle.Render("MIDI Port: ") + "Initializing...\n\n")
+		b.WriteString(subtitleStyle.Render("MIDI Ports: ") + "Initializing...\n\n")
 	}
 
 	// Status

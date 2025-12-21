@@ -164,9 +164,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		// Handle playback tick - only advance step when playing
-		if m.sequencer.isPlaying {
-			// Send note offs for previous step's notes
+		// Handle playback tick - only process when playing
+		if m.sequencer.isPlaying && m.mode == sequencerMode {
+			// Send note offs for current step's notes (they've been playing since last tick)
 			prevStep := m.sequencer.currentStep
 			for ch := 0; ch < numChannels; ch++ {
 				if m.sequencer.steps[ch][prevStep] {
@@ -178,7 +178,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Advance to next step
 			m.sequencer.currentStep = (m.sequencer.currentStep + 1) % numSteps
 
-			// Send note ons for current step's active notes
+			// Send note ons for new step's active notes
 			currentStep := m.sequencer.currentStep
 			for ch := 0; ch < numChannels; ch++ {
 				if m.sequencer.steps[ch][currentStep] {
@@ -186,10 +186,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sequencer.sendNoteOn(uint8(ch), uint8(m.sequencer.notes[ch][currentStep]), 100) //nolint:gosec
 				}
 			}
-		}
 
-		if m.mode == sequencerMode {
-			return m, tick()
+			// Schedule next tick
+			return m, tickWithBPM(m.sequencer.bpm)
 		}
 		return m, nil
 
@@ -268,7 +267,6 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				fb.message = fmt.Sprintf("Error loading MIDI: %v", err)
 			} else {
 				m.mode = sequencerMode
-				return m, tick() // Start ticks for visualizer animation
 			}
 		}
 	case "n":
@@ -279,7 +277,6 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			fb.message = fmt.Sprintf("Error creating MIDI: %v", err)
 		} else {
 			m.mode = sequencerMode
-			return m, tick() // Start ticks for visualizer animation
 		}
 	}
 

@@ -70,7 +70,6 @@ type virtualModel struct {
 	lastMessage    string
 	messageHistory []string // Historical log of MIDI messages
 	messageCount   int
-	volume         float64
 	err            error
 	width          int
 	height         int
@@ -99,7 +98,6 @@ func newVirtualModel(name string) *virtualModel {
 		deviceName:     name,
 		activeNotes:    make(map[string]noteDisplay),
 		messageHistory: make([]string, 0, maxMessageHistory),
-		volume:         0.5,
 	}
 }
 
@@ -113,7 +111,6 @@ func (m *virtualModel) initMIDI() tea.Msg {
 	if err != nil {
 		return initResultMsg{err: fmt.Errorf("failed to initialize audio: %w", err)}
 	}
-	synth.SetVolume(0.5)
 
 	// Create the rtmidi driver
 	driver, err := rtmididrv.New()
@@ -170,39 +167,8 @@ func (m *virtualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			return m, m.cleanup
-		case "up", "k":
-			if m.volume < 1.0 {
-				m.volume += 0.1
-				if m.volume > 1.0 {
-					m.volume = 1.0
-				}
-				if m.synth != nil {
-					m.synth.SetVolume(m.volume)
-				}
-			}
-		case "down", "j":
-			if m.volume > 0 {
-				m.volume -= 0.1
-				if m.volume < 0 {
-					m.volume = 0
-				}
-				if m.synth != nil {
-					m.synth.SetVolume(m.volume)
-				}
-			}
-		case " ":
-			// Panic - all notes off
-			if m.synth != nil {
-				m.synth.AllNotesOff()
-			}
-			m.activeNotes = make(map[string]noteDisplay)
-			m.lastMessage = "All notes off (panic)"
-			m.messageHistory = append([]string{"*** All notes off (panic) ***"}, m.messageHistory...)
-			if len(m.messageHistory) > maxMessageHistory {
-				m.messageHistory = m.messageHistory[:maxMessageHistory]
-			}
 		}
 	}
 
@@ -396,7 +362,7 @@ func (m *virtualModel) View() string {
 	// Error display
 	if m.err != nil {
 		b.WriteString(errorStyle.Render("Error: "+m.err.Error()) + "\n\n")
-		b.WriteString(helpStyle.Render("Press 'q' to quit"))
+		b.WriteString(helpStyle.Render("Press Ctrl+C to quit"))
 		return b.String()
 	}
 
@@ -404,14 +370,10 @@ func (m *virtualModel) View() string {
 	b.WriteString(subtitleStyle.Render("Device Name: ") + m.deviceName + "\n")
 
 	if m.inPort != nil {
-		b.WriteString(subtitleStyle.Render("MIDI Port: ") + statusStyle.Render(m.inPort.String()) + "\n")
+		b.WriteString(subtitleStyle.Render("MIDI Port: ") + statusStyle.Render(m.inPort.String()) + "\n\n")
 	} else {
-		b.WriteString(subtitleStyle.Render("MIDI Port: ") + "Initializing...\n")
+		b.WriteString(subtitleStyle.Render("MIDI Port: ") + "Initializing...\n\n")
 	}
-
-	// Volume bar
-	volumeBar := renderVolumeBar(m.volume)
-	b.WriteString(subtitleStyle.Render("Volume: ") + volumeBar + "\n\n")
 
 	// Status
 	b.WriteString(statusStyle.Render("● Listening for MIDI") + "\n\n")
@@ -458,23 +420,9 @@ func (m *virtualModel) View() string {
 	b.WriteString("\n" + renderKeyboard(m.activeNotes) + "\n")
 
 	// Help
-	b.WriteString("\n" + helpStyle.Render("↑/↓: volume • space: panic (all notes off) • q: quit"))
+	b.WriteString("\n" + helpStyle.Render("Ctrl+C: quit"))
 
 	return b.String()
-}
-
-func renderVolumeBar(vol float64) string {
-	filled := int(vol * 20)
-	empty := 20 - filled
-
-	filledStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00"))
-	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#333333"))
-
-	bar := filledStyle.Render(strings.Repeat("█", filled))
-	bar += emptyStyle.Render(strings.Repeat("░", empty))
-	bar += fmt.Sprintf(" %d%%", int(vol*100))
-
-	return bar
 }
 
 func renderKeyboard(activeNotes map[string]noteDisplay) string {

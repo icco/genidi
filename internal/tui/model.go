@@ -189,7 +189,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.mode == sequencerMode {
-			return m, tick()
+			return m, tickWithBPM(m.sequencer.bpm)
 		}
 		return m, nil
 
@@ -268,7 +268,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				fb.message = fmt.Sprintf("Error loading MIDI: %v", err)
 			} else {
 				m.mode = sequencerMode
-				return m, tick() // Start ticks for visualizer animation
+				return m, tickWithBPM(m.sequencer.bpm) // Start ticks for visualizer animation
 			}
 		}
 	case "n":
@@ -279,7 +279,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			fb.message = fmt.Sprintf("Error creating MIDI: %v", err)
 		} else {
 			m.mode = sequencerMode
-			return m, tick() // Start ticks for visualizer animation
+			return m, tickWithBPM(m.sequencer.bpm) // Start ticks for visualizer animation
 		}
 	}
 

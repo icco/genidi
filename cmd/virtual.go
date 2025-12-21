@@ -39,7 +39,9 @@ func init() {
 }
 
 func runVirtual(cmd *cobra.Command, args []string) {
-	p := tea.NewProgram(newVirtualModel(deviceName), tea.WithAltScreen())
+	m := newVirtualModel(deviceName)
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	m.program = p // Store reference so MIDI callback can send messages
 
 	// Handle graceful shutdown
 	c := make(chan os.Signal, 1)
@@ -55,20 +57,24 @@ func runVirtual(cmd *cobra.Command, args []string) {
 	}
 }
 
+const maxMessageHistory = 20
+
 // virtualModel represents the TUI state for the virtual MIDI device
 type virtualModel struct {
-	deviceName   string
-	synth        *audio.Synth
-	driver       *rtmididrv.Driver
-	inPort       drivers.In
-	stopFunc     func()
-	activeNotes  map[string]noteDisplay // channel:note -> display info
-	lastMessage  string
-	messageCount int
-	volume       float64
-	err          error
-	width        int
-	height       int
+	deviceName     string
+	synth          *audio.Synth
+	driver         *rtmididrv.Driver
+	inPort         drivers.In
+	stopFunc       func()
+	activeNotes    map[string]noteDisplay // channel:note -> display info
+	lastMessage    string
+	messageHistory []string // Historical log of MIDI messages
+	messageCount   int
+	volume         float64
+	err            error
+	width          int
+	height         int
+	program        *tea.Program // Reference to send messages from MIDI callback
 }
 
 type noteDisplay struct {
@@ -80,17 +86,20 @@ type noteDisplay struct {
 
 // midiEventMsg is sent when a MIDI message is received
 type midiEventMsg struct {
-	msgType  string
-	channel  uint8
-	note     uint8
-	velocity uint8
+	msgType    string
+	channel    uint8
+	note       uint8
+	velocity   uint8
+	controller uint8 // for CC messages
+	value      uint8 // for CC messages
 }
 
 func newVirtualModel(name string) *virtualModel {
 	return &virtualModel{
-		deviceName:  name,
-		activeNotes: make(map[string]noteDisplay),
-		volume:      0.5,
+		deviceName:     name,
+		activeNotes:    make(map[string]noteDisplay),
+		messageHistory: make([]string, 0, maxMessageHistory),
+		volume:         0.5,
 	}
 }
 
@@ -190,6 +199,10 @@ func (m *virtualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.activeNotes = make(map[string]noteDisplay)
 			m.lastMessage = "All notes off (panic)"
+			m.messageHistory = append([]string{"*** All notes off (panic) ***"}, m.messageHistory...)
+			if len(m.messageHistory) > maxMessageHistory {
+				m.messageHistory = m.messageHistory[:maxMessageHistory]
+			}
 		}
 	}
 
@@ -216,21 +229,22 @@ func (m *virtualModel) listenMIDI() tea.Msg {
 			if len(data) >= 3 {
 				note := data[1]
 				velocity := data[2]
+				// Play the note through synth
 				if m.synth != nil {
-					m.synth.NoteOn(channel, note, velocity)
+					if velocity > 0 {
+						m.synth.NoteOn(channel, note, velocity)
+					} else {
+						m.synth.NoteOff(channel, note)
+					}
 				}
-				m.activeNotes[fmt.Sprintf("%d:%d", channel, note)] = noteDisplay{
-					channel:  channel,
-					note:     note,
-					velocity: velocity,
-					name:     midiNoteName(note),
-				}
-				m.messageCount++
-				if velocity > 0 {
-					m.lastMessage = fmt.Sprintf("Note On: Ch%d %s vel:%d", channel+1, midiNoteName(note), velocity)
-				} else {
-					delete(m.activeNotes, fmt.Sprintf("%d:%d", channel, note))
-					m.lastMessage = fmt.Sprintf("Note Off: Ch%d %s", channel+1, midiNoteName(note))
+				// Send message to update UI
+				if m.program != nil {
+					m.program.Send(midiEventMsg{
+						msgType:  "noteOn",
+						channel:  channel,
+						note:     note,
+						velocity: velocity,
+					})
 				}
 			}
 		case 0x80: // Note Off
@@ -239,27 +253,40 @@ func (m *virtualModel) listenMIDI() tea.Msg {
 				if m.synth != nil {
 					m.synth.NoteOff(channel, note)
 				}
-				delete(m.activeNotes, fmt.Sprintf("%d:%d", channel, note))
-				m.messageCount++
-				m.lastMessage = fmt.Sprintf("Note Off: Ch%d %s", channel+1, midiNoteName(note))
+				// Send message to update UI
+				if m.program != nil {
+					m.program.Send(midiEventMsg{
+						msgType: "noteOff",
+						channel: channel,
+						note:    note,
+					})
+				}
 			}
 		case 0xB0: // Control Change
 			if len(data) >= 3 {
 				controller := data[1]
 				value := data[2]
-				m.messageCount++
-				m.lastMessage = fmt.Sprintf("CC: Ch%d ctrl:%d val:%d", channel+1, controller, value)
 				// Handle all notes off (CC 123)
-				if controller == 123 {
-					if m.synth != nil {
-						m.synth.AllNotesOff()
-					}
-					m.activeNotes = make(map[string]noteDisplay)
+				if controller == 123 && m.synth != nil {
+					m.synth.AllNotesOff()
+				}
+				// Send message to update UI
+				if m.program != nil {
+					m.program.Send(midiEventMsg{
+						msgType:    "cc",
+						channel:    channel,
+						controller: controller,
+						value:      value,
+					})
 				}
 			}
 		case 0xE0: // Pitch Bend
-			m.messageCount++
-			m.lastMessage = fmt.Sprintf("Pitch Bend: Ch%d", channel+1)
+			if m.program != nil {
+				m.program.Send(midiEventMsg{
+					msgType: "pitchBend",
+					channel: channel,
+				})
+			}
 		}
 	}, drivers.ListenConfig{})
 
@@ -275,6 +302,7 @@ func (m *virtualModel) listenMIDI() tea.Msg {
 
 func (m *virtualModel) handleMIDIEvent(msg midiEventMsg) {
 	key := fmt.Sprintf("%d:%d", msg.channel, msg.note)
+	var message string
 
 	switch msg.msgType {
 	case "noteOn":
@@ -285,17 +313,36 @@ func (m *virtualModel) handleMIDIEvent(msg midiEventMsg) {
 				velocity: msg.velocity,
 				name:     midiNoteName(msg.note),
 			}
-			m.lastMessage = fmt.Sprintf("Note On: Ch%d %s vel:%d",
+			message = fmt.Sprintf("Note On:  Ch%d %-4s vel:%d",
 				msg.channel+1, midiNoteName(msg.note), msg.velocity)
 		} else {
 			delete(m.activeNotes, key)
-			m.lastMessage = fmt.Sprintf("Note Off: Ch%d %s",
+			message = fmt.Sprintf("Note Off: Ch%d %-4s",
 				msg.channel+1, midiNoteName(msg.note))
 		}
 	case "noteOff":
 		delete(m.activeNotes, key)
-		m.lastMessage = fmt.Sprintf("Note Off: Ch%d %s",
+		message = fmt.Sprintf("Note Off: Ch%d %-4s",
 			msg.channel+1, midiNoteName(msg.note))
+	case "cc":
+		message = fmt.Sprintf("CC:       Ch%d ctrl:%d val:%d",
+			msg.channel+1, msg.controller, msg.value)
+		// Handle all notes off (CC 123)
+		if msg.controller == 123 {
+			m.activeNotes = make(map[string]noteDisplay)
+		}
+	case "pitchBend":
+		message = fmt.Sprintf("Pitch Bend: Ch%d", msg.channel+1)
+	}
+
+	m.lastMessage = message
+
+	// Add to history (keep most recent at top)
+	if message != "" {
+		m.messageHistory = append([]string{message}, m.messageHistory...)
+		if len(m.messageHistory) > maxMessageHistory {
+			m.messageHistory = m.messageHistory[:maxMessageHistory]
+		}
 	}
 }
 
@@ -382,14 +429,30 @@ func (m *virtualModel) View() string {
 		b.WriteString("  " + noteStyle.Render(strings.Join(notesList, " ")) + "\n")
 	}
 
-	// Last message
-	b.WriteString("\n" + subtitleStyle.Render("Last Event: "))
-	if m.lastMessage != "" {
-		b.WriteString(m.lastMessage)
+	// Message history log
+	b.WriteString("\n" + subtitleStyle.Render(fmt.Sprintf("Message Log: [%d total]", m.messageCount)) + "\n")
+	
+	logStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#AAAAAA"))
+	logHighlightStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF"))
+	
+	if len(m.messageHistory) == 0 {
+		b.WriteString("  " + logStyle.Render("(waiting for input)") + "\n")
 	} else {
-		b.WriteString("(waiting for input)")
+		// Show up to 10 most recent messages
+		displayCount := len(m.messageHistory)
+		if displayCount > 10 {
+			displayCount = 10
+		}
+		for i := 0; i < displayCount; i++ {
+			msg := m.messageHistory[i]
+			if i == 0 {
+				// Most recent message highlighted
+				b.WriteString("  " + logHighlightStyle.Render("▶ "+msg) + "\n")
+			} else {
+				b.WriteString("  " + logStyle.Render("  "+msg) + "\n")
+			}
+		}
 	}
-	b.WriteString(fmt.Sprintf(" [%d total]\n", m.messageCount))
 
 	// Keyboard visualization
 	b.WriteString("\n" + renderKeyboard(m.activeNotes) + "\n")

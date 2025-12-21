@@ -366,7 +366,7 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		s.isPlaying = !s.isPlaying
 		if s.isPlaying {
 			s.currentStep = 0
-			return m, tick()
+			return m, tickWithBPM(s.bpm)
 		} else {
 			// Stop all notes when stopping playback
 			s.sendAllNotesOff()
@@ -393,9 +393,12 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func tick() tea.Cmd {
-	// Tick faster for smoother visual feedback (60ms provides good balance)
-	return tea.Tick(time.Millisecond*60, func(t time.Time) tea.Msg {
+func tickWithBPM(bpm int) tea.Cmd {
+	// Calculate step interval based on BPM
+	// BPM = beats per minute, 16 steps = 4 beats (16th notes)
+	// So each step = (60000ms / BPM) / 4
+	stepIntervalMs := 60000 / bpm / 4
+	return tea.Tick(time.Millisecond*time.Duration(stepIntervalMs), func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }

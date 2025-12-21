@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -115,16 +116,16 @@ func (m *virtualModel) initMIDI() tea.Msg {
 	// Create the rtmidi driver
 	driver, err := rtmididrv.New()
 	if err != nil {
-		synth.Close()
-		return initResultMsg{err: fmt.Errorf("failed to initialize MIDI driver: %w", err)}
+		closeErr := synth.Close()
+		return initResultMsg{err: errors.Join(fmt.Errorf("failed to initialize MIDI driver: %w", err), closeErr)}
 	}
 
 	// Create a single virtual MIDI input port that receives all channels
 	port, err := driver.OpenVirtualIn(m.deviceName)
 	if err != nil {
-		driver.Close()
-		synth.Close()
-		return initResultMsg{err: fmt.Errorf("failed to create virtual MIDI port: %w", err)}
+		driverErr := driver.Close()
+		synthErr := synth.Close()
+		return initResultMsg{err: errors.Join(fmt.Errorf("failed to create virtual MIDI port: %w", err), driverErr, synthErr)}
 	}
 
 	return initResultMsg{
@@ -314,20 +315,30 @@ func (m *virtualModel) handleMIDIEvent(msg midiEventMsg) {
 }
 
 func (m *virtualModel) cleanup() tea.Msg {
+	var errs []error
 	// Stop listener
 	if m.stopFunc != nil {
 		m.stopFunc()
 	}
 	// Close port
 	if m.inPort != nil {
-		m.inPort.Close()
+		if err := m.inPort.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing MIDI port: %w", err))
+		}
 	}
 	if m.driver != nil {
-		m.driver.Close()
+		if err := m.driver.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing MIDI driver: %w", err))
+		}
 	}
 	if m.synth != nil {
 		m.synth.AllNotesOff()
-		m.synth.Close()
+		if err := m.synth.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing synth: %w", err))
+		}
+	}
+	if len(errs) > 0 {
+		m.err = errors.Join(errs...)
 	}
 	return tea.Quit()
 }
@@ -449,7 +460,8 @@ func renderKeyboard(activeNotes map[string]noteDisplay) string {
 	var top, bottom strings.Builder
 
 	for octave := 3; octave <= 4; octave++ {
-		baseNote := uint8(octave*12 + 12) // C of this octave
+		// octave is 3 or 4, so octave*12+12 is 48 or 60, well within uint8 range
+		baseNote := uint8(octave*12 + 12) // #nosec G115 -- octave is constrained to 3-4
 
 		whiteKeys := []uint8{0, 2, 4, 5, 7, 9, 11}                        // C D E F G A B
 		blackKeys := []int{1, 3, -1, 6, 8, 10}                            // C# D# _ F# G# A#
@@ -458,7 +470,8 @@ func renderKeyboard(activeNotes map[string]noteDisplay) string {
 		// Top row (black keys)
 		for i, hasBlack := range blackPos {
 			if hasBlack && blackKeys[i] >= 0 {
-				note := baseNote + uint8(blackKeys[i])
+				// blackKeys[i] is 1, 3, 6, 8, or 10 when >= 0, safe for uint8
+				note := baseNote + uint8(blackKeys[i]) // #nosec G115 -- blackKeys values are 0-10
 				if activeSet[note] {
 					top.WriteString(activeBlack.Render("█"))
 				} else {

@@ -26,15 +26,14 @@ const (
 
 // Voice represents a single playing note
 type Voice struct {
-	note       uint8
-	channel    uint8
-	velocity   uint8
-	frequency  float64
-	phase      float64
-	envelope   float64 // 0-1 for ADSR envelope
-	releasing  bool
-	attackTime float64
-	active     bool
+	note      uint8
+	channel   uint8
+	velocity  uint8
+	frequency float64
+	phase     float64
+	envelope  float64 // 0-1 for ADSR envelope
+	releasing bool
+	active    bool
 }
 
 // Synth is a polyphonic synthesizer
@@ -267,9 +266,8 @@ func (s *Synth) Close() error {
 	s.running = false
 	s.mu.Unlock()
 
-	if s.player != nil {
-		return s.player.Close()
-	}
+	// Note: As of oto v3.4, player.Close() is deprecated and no longer needed.
+	// The player will be cleaned up when garbage collected.
 	return nil
 }
 

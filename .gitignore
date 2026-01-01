@@ -26,13 +26,14 @@ go.work
 go.work.sum
 
 .task
+.DS_Store
 
 # env file
 .env
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
 
 # Test directory
 test_midi/

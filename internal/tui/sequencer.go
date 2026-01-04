@@ -46,6 +46,16 @@ type sequencerModel struct {
 }
 
 func (s *sequencerModel) refreshMIDIPorts() {
+	// Remember the currently connected port name (if any)
+	var connectedPortName string
+	if s.outPort != nil {
+		connectedPortName = s.outPort.String()
+	}
+
+	// Close existing connection - the port objects are about to be replaced
+	s.closePort()
+	s.selectedOut = -1
+
 	s.midiOuts = nil
 	s.midiOutNames = nil
 
@@ -55,10 +65,18 @@ func (s *sequencerModel) refreshMIDIPorts() {
 		s.midiOutNames = append(s.midiOutNames, out.String())
 	}
 
-	// If we had a selected port that's no longer available, reset
-	if s.selectedOut >= len(s.midiOuts) {
-		s.selectedOut = -1
-		s.closePort()
+	// If we had a connected port, try to reconnect to the same port by name
+	if connectedPortName != "" {
+		for i, name := range s.midiOutNames {
+			if name == connectedPortName {
+				if err := s.selectPort(i); err == nil {
+					s.message = fmt.Sprintf("Reconnected to: %s", connectedPortName)
+				}
+				return
+			}
+		}
+		// Port no longer available
+		s.message = fmt.Sprintf("Port '%s' no longer available", connectedPortName)
 	}
 }
 

@@ -138,6 +138,25 @@ func (s *sequencerModel) sendAllNotesOff() {
 	}
 }
 
+func (s *sequencerModel) stopPlayback() {
+	if s.sendFunc != nil {
+		// Send note offs for any notes that were playing on the current step
+		for ch := 0; ch < numChannels; ch++ {
+			if s.steps[ch][s.currentStep] {
+				s.sendNoteOff(uint8(ch), uint8(s.notes[ch][s.currentStep])) //nolint:gosec
+			}
+		}
+		// Send all notes off (CC#123) on all channels as a safety measure
+		s.sendAllNotesOff()
+		// Send MIDI Stop message (System Real-Time)
+		if err := s.sendFunc(midi.Stop()); err != nil {
+			s.message = fmt.Sprintf("Error sending MIDI stop: %v", err)
+		}
+	}
+	// Reset playback position
+	s.currentStep = 0
+}
+
 func (s *sequencerModel) createNewMIDI(path string) error {
 	s.filePath = path
 	s.bpm = 120
@@ -392,8 +411,8 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, tickWithBPM(s.bpm)
 		} else {
-			// Stop all notes when stopping playback
-			s.sendAllNotesOff()
+			// Stop playback - send note offs for currently playing step and reset state
+			s.stopPlayback()
 		}
 	case "c":
 		// Clear all steps in current channel
@@ -449,16 +468,17 @@ func (m model) viewSequencer() string {
 		return m.viewPortSelection()
 	}
 
-	// Clock visualization
-	clockBar := renderClockBar(s.bpm, s.isPlaying, s.currentStep)
-	b.WriteString(clockBar + "\n\n")
 
 	// Header row with proper spacing
 	// 14 chars to match data rows: 8 for channel + 6 for note
 	b.WriteString("Chan    Note  ")
 	hexDigits := "0123456789ABCDEF"
-	headerStyle := lipgloss.NewStyle().Width(3).Align(lipgloss.Center).Foreground(lipgloss.Color("#888888"))
 	for i := 0; i < numSteps; i++ {
+		headerStyle := lipgloss.NewStyle().Width(3).Align(lipgloss.Center).Foreground(lipgloss.Color("#888888"))
+		// Highlight the currently playing column
+		if s.isPlaying && i == s.currentStep {
+			headerStyle = headerStyle.Background(lipgloss.Color("#7D56F4")).Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
+		}
 		b.WriteString(headerStyle.Render(string(hexDigits[i])))
 	}
 	b.WriteString("\n")
@@ -493,14 +513,14 @@ func (m model) viewSequencer() string {
 			// Apply styling with fixed width and center alignment
 			cellStyle := lipgloss.NewStyle().Width(3).Align(lipgloss.Center)
 
-			// Highlight current cursor position
-			if ch == s.cursorY && step == s.cursorX {
+			// Highlight the currently playing column
+			if s.isPlaying && step == s.currentStep {
 				cellStyle = cellStyle.Background(lipgloss.Color("#7D56F4"))
 			}
 
-			// Highlight playing step
-			if s.isPlaying && step == s.currentStep {
-				cellStyle = cellStyle.Foreground(lipgloss.Color("#00FF00")).Bold(true)
+			// Highlight current cursor position (overrides playing column)
+			if ch == s.cursorY && step == s.cursorX {
+				cellStyle = cellStyle.Background(lipgloss.Color("#5A3DBF"))
 			}
 
 			// Active step gets color
@@ -565,64 +585,6 @@ func (m model) viewPortSelection() string {
 	b.WriteString("\n" + helpStyle.Render("↑/k: up • ↓/j: down • enter: select • r: refresh • q/esc: cancel"))
 
 	return b.String()
-}
-
-func renderClockBar(bpm int, isPlaying bool, currentStep int) string {
-	// Colors for the clock bar - gradient from cyan to magenta
-	colors := []string{
-		"#00FFFF", "#00E5FF", "#00CCFF", "#00B2FF",
-		"#0099FF", "#0080FF", "#0066FF", "#1A4DFF",
-		"#3333FF", "#4D1AFF", "#6600FF", "#8000FF",
-		"#9900FF", "#B300FF", "#CC00FF", "#FF00FF",
-	}
-
-	bar := strings.Builder{}
-	// 14 chars to align with grid: "Chan    Note  " = 8 + 6 = 14 chars
-	bar.WriteString("Clock         ")
-
-	// Each step is 3 characters wide to match the grid
-	for i := 0; i < numSteps; i++ {
-		var cell string
-		// Use Width(3) to ensure consistent alignment with the step grid
-		cellStyle := lipgloss.NewStyle().Width(3)
-
-		if isPlaying && i == currentStep {
-			// Current playing position - bright indicator
-			cell = "▶"
-			cellStyle = cellStyle.
-				Foreground(lipgloss.Color("#FFFFFF")).
-				Background(lipgloss.Color(colors[i])).
-				Bold(true).
-				Align(lipgloss.Center)
-		} else if isPlaying && i < currentStep {
-			// Already played - filled with color
-			cell = "█"
-			cellStyle = cellStyle.
-				Foreground(lipgloss.Color(colors[i])).
-				Align(lipgloss.Center)
-		} else {
-			// Not yet played or stopped - dim
-			cell = "·"
-			cellStyle = cellStyle.
-				Foreground(lipgloss.Color("#444444")).
-				Align(lipgloss.Center)
-		}
-
-		bar.WriteString(cellStyle.Render(cell))
-	}
-
-	// Status after the bar
-	status := " Stopped"
-	if isPlaying {
-		status = " Playing"
-	}
-	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
-	if isPlaying {
-		statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")).Bold(true)
-	}
-	bar.WriteString(statusStyle.Render(status))
-
-	return bar.String()
 }
 
 func midiNoteToName(note int) string {

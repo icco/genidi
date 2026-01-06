@@ -166,8 +166,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		// Handle playback tick - only process when playing
 		if m.sequencer.isPlaying && m.mode == sequencerMode {
-			// Send note offs for current step's notes (they've been playing since last tick)
+			// Save previous step and advance immediately (so visual updates as early as possible)
 			prevStep := m.sequencer.currentStep
+			m.sequencer.currentStep = (m.sequencer.currentStep + 1) % numSteps
+			currentStep := m.sequencer.currentStep
+
+			// Send note offs for previous step's notes (they've been playing since last tick)
 			for ch := 0; ch < numChannels; ch++ {
 				if m.sequencer.steps[ch][prevStep] {
 					// Safe cast: ch is bounded by numChannels (4), notes[ch][prevStep] is bounded by MIDI note range (0-127)
@@ -175,11 +179,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-			// Advance to next step
-			m.sequencer.currentStep = (m.sequencer.currentStep + 1) % numSteps
-
-			// Send note ons for new step's active notes
-			currentStep := m.sequencer.currentStep
+			// Send note ons for current step's active notes
 			for ch := 0; ch < numChannels; ch++ {
 				if m.sequencer.steps[ch][currentStep] {
 					// Safe cast: ch is bounded by numChannels (4), notes[ch][currentStep] is bounded by MIDI note range (0-127)

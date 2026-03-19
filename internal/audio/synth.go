@@ -150,10 +150,10 @@ func (r *synthReader) Read(buf []byte) (int, error) {
 
 		// Write stereo samples (same for L and R)
 		idx := i * channelCount * bitDepth
-		buf[idx] = byte(sampleInt)
-		buf[idx+1] = byte(sampleInt >> 8)
-		buf[idx+2] = byte(sampleInt)
-		buf[idx+3] = byte(sampleInt >> 8)
+		buf[idx] = byte(uint16(sampleInt))
+		buf[idx+1] = byte(uint16(sampleInt) >> 8)
+		buf[idx+2] = byte(uint16(sampleInt))
+		buf[idx+3] = byte(uint16(sampleInt) >> 8)
 	}
 
 	return len(buf), nil

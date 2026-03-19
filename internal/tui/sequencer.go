@@ -453,12 +453,12 @@ func (m model) viewSequencer() string {
 
 	// Title
 	b.WriteString(titleStyle.Render("MIDI Sequencer Editor") + "\n\n")
-	b.WriteString(fmt.Sprintf("File: %s\n", s.filePath))
-	b.WriteString(fmt.Sprintf("BPM: %d (use +/- to adjust)\n", s.bpm))
+	fmt.Fprintf(&b, "File: %s\n", s.filePath)
+	fmt.Fprintf(&b, "BPM: %d (use +/- to adjust)\n", s.bpm)
 
 	// MIDI output status
 	if s.outPort != nil {
-		b.WriteString(fmt.Sprintf("MIDI Out: %s ✓\n\n", s.outPort.String()))
+		fmt.Fprintf(&b, "MIDI Out: %s ✓\n\n", s.outPort.String())
 	} else {
 		b.WriteString("MIDI Out: Not connected (press 'o' to select)\n\n")
 	}

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -223,13 +224,10 @@ func (s *sequencerModel) loadMIDI(path string) error {
 	// Calculate ticks per step (one bar = 4 beats = 16 steps)
 	ticksPerStep := uint32(ticksPerQuarterNote / 4) // 240 ticks per step
 
-	tracks := rd.Tracks
-	// Skip track 0 (tempo track), process remaining tracks as channels
-	for trackIdx := 1; trackIdx < len(tracks) && trackIdx <= numChannels; trackIdx++ {
-		ch := trackIdx - 1 // Track 1 maps to channel 0, etc.
-		track := tracks[trackIdx]
-
-		// Parse messages in the track
+	// Map notes by the MIDI channel embedded in each message rather than by
+	// track position, so any track layout works: format 0 single-track files,
+	// one track per channel, or anything in between.
+	for _, track := range rd.Tracks {
 		var currentTick uint32
 		for _, msg := range track {
 			currentTick += msg.Delta
@@ -239,9 +237,9 @@ func (s *sequencerModel) loadMIDI(path string) error {
 			if msg.Message.GetNoteOn(&channel, &key, &velocity) {
 				// Calculate which step this note belongs to
 				step := int(currentTick / ticksPerStep)
-				if step < numSteps && velocity > 0 {
-					s.notes[ch][step] = int(key)
-					s.steps[ch][step] = true
+				if int(channel) < numChannels && step < numSteps && velocity > 0 {
+					s.notes[channel][step] = int(key)
+					s.steps[channel][step] = true
 				}
 			}
 		}
@@ -262,8 +260,10 @@ func (s *sequencerModel) saveMIDI() error {
 	// Calculate ticks per step (one bar = 4 beats = 16 steps)
 	ticksPerStep := uint32(ticksPerQuarterNote / 4) // 240 ticks per step
 
-	// Track 0: Tempo track
+	// Track 0: Tempo track. Named after the file so DAWs display a sequence name.
+	sequenceName := strings.TrimSuffix(filepath.Base(s.filePath), filepath.Ext(s.filePath))
 	var track0 smf.Track
+	track0.Add(0, smf.MetaTrackSequenceName(sequenceName))
 	track0.Add(0, smf.MetaMeter(4, 4))
 	track0.Add(0, smf.MetaTempo(float64(s.bpm)))
 	track0.Close(0)
@@ -274,6 +274,7 @@ func (s *sequencerModel) saveMIDI() error {
 	// Create tracks for each channel
 	for ch := 0; ch < numChannels; ch++ {
 		var track smf.Track
+		track.Add(0, smf.MetaTrackSequenceName(fmt.Sprintf("Channel %d", ch+1)))
 		var lastTick uint32 = 0
 
 		for step := 0; step < numSteps; step++ {

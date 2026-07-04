@@ -91,6 +91,14 @@ type noteDisplay struct {
 	name     string
 }
 
+// MIDI event types for midiEventMsg
+const (
+	eventNoteOn    = "noteOn"
+	eventNoteOff   = "noteOff"
+	eventCC        = "cc"
+	eventPitchBend = "pitchBend"
+)
+
 // midiEventMsg is sent when a MIDI message is received
 type midiEventMsg struct {
 	msgType    string
@@ -235,7 +243,7 @@ func (m *virtualModel) listenMIDI() tea.Msg {
 				// Send message to update UI
 				if m.program != nil {
 					m.program.Send(midiEventMsg{
-						msgType:  "noteOn",
+						msgType:  eventNoteOn,
 						channel:  channel,
 						note:     note,
 						velocity: velocity,
@@ -251,7 +259,7 @@ func (m *virtualModel) listenMIDI() tea.Msg {
 				// Send message to update UI
 				if m.program != nil {
 					m.program.Send(midiEventMsg{
-						msgType: "noteOff",
+						msgType: eventNoteOff,
 						channel: channel,
 						note:    note,
 					})
@@ -268,7 +276,7 @@ func (m *virtualModel) listenMIDI() tea.Msg {
 				// Send message to update UI
 				if m.program != nil {
 					m.program.Send(midiEventMsg{
-						msgType:    "cc",
+						msgType:    eventCC,
 						channel:    channel,
 						controller: controller,
 						value:      value,
@@ -278,7 +286,7 @@ func (m *virtualModel) listenMIDI() tea.Msg {
 		case 0xE0: // Pitch Bend
 			if m.program != nil {
 				m.program.Send(midiEventMsg{
-					msgType: "pitchBend",
+					msgType: eventPitchBend,
 					channel: channel,
 				})
 			}
@@ -297,7 +305,7 @@ func (m *virtualModel) handleMIDIEvent(msg midiEventMsg) {
 	var message string
 
 	switch msg.msgType {
-	case "noteOn":
+	case eventNoteOn:
 		if msg.velocity > 0 {
 			m.activeNotes[key] = noteDisplay{
 				channel:  msg.channel,
@@ -312,11 +320,11 @@ func (m *virtualModel) handleMIDIEvent(msg midiEventMsg) {
 			message = fmt.Sprintf("Note Off: Ch%d %-4s",
 				msg.channel+1, midiNoteName(msg.note))
 		}
-	case "noteOff":
+	case eventNoteOff:
 		delete(m.activeNotes, key)
 		message = fmt.Sprintf("Note Off: Ch%d %-4s",
 			msg.channel+1, midiNoteName(msg.note))
-	case "cc":
+	case eventCC:
 		message = fmt.Sprintf("CC:       Ch%d ctrl:%d val:%d",
 			msg.channel+1, msg.controller, msg.value)
 		// CC 123: clear only this channel's notes
@@ -328,7 +336,7 @@ func (m *virtualModel) handleMIDIEvent(msg midiEventMsg) {
 				}
 			}
 		}
-	case "pitchBend":
+	case eventPitchBend:
 		message = fmt.Sprintf("Pitch Bend: Ch%d", msg.channel+1)
 	}
 

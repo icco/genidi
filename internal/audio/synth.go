@@ -35,6 +35,7 @@ type Voice struct {
 	envelope  float64 // 0-1 for ADSR envelope
 	releasing bool
 	active    bool
+	seq       uint64 // note-on order for voice stealing
 }
 
 // Synth is a polyphonic synthesizer
@@ -46,7 +47,7 @@ type Synth struct {
 	maxVoices    int
 	masterVolume float64
 	waveTypes    [16]WaveType // wave type per MIDI channel
-	running      bool
+	voiceSeq     uint64
 }
 
 // NewSynth creates a new synthesizer
@@ -67,7 +68,6 @@ func NewSynth() (*Synth, error) {
 		otoCtx:       otoCtx,
 		maxVoices:    64,
 		masterVolume: 0.3,
-		running:      true,
 	}
 
 	// Assign different wave types to channels for variety
@@ -156,7 +156,7 @@ func (r *synthReader) Read(buf []byte) (int, error) {
 		binary.LittleEndian.PutUint16(buf[idx+2:], bits)
 	}
 
-	return len(buf), nil
+	return numSamples * channelCount * bitDepth, nil
 }
 
 func generateWave(waveType WaveType, phase float64) float64 {
@@ -190,12 +190,22 @@ func (s *Synth) NoteOn(channel, note, velocity uint8) {
 		return
 	}
 
-	// Find an inactive voice or steal the oldest one
+	// Retrigger an existing voice; a stacked duplicate would never get its NoteOff.
 	var voice *Voice
 	for _, v := range s.voices {
-		if v != nil && !v.active {
+		if v != nil && v.active && v.note == note && v.channel == channel {
 			voice = v
 			break
+		}
+	}
+
+	// Otherwise find an inactive voice
+	if voice == nil {
+		for _, v := range s.voices {
+			if v != nil && !v.active {
+				voice = v
+				break
+			}
 		}
 	}
 
@@ -204,11 +214,12 @@ func (s *Synth) NoteOn(channel, note, velocity uint8) {
 			voice = &Voice{}
 			s.voices = append(s.voices, voice)
 		} else {
-			// Steal oldest voice
-			voice = s.voices[0]
+			voice = s.stealVoiceLocked()
 		}
 	}
 
+	s.voiceSeq++
+	voice.seq = s.voiceSeq
 	voice.note = note
 	voice.channel = channel
 	voice.velocity = velocity
@@ -217,6 +228,23 @@ func (s *Synth) NoteOn(channel, note, velocity uint8) {
 	voice.envelope = 0
 	voice.releasing = false
 	voice.active = true
+}
+
+// stealVoiceLocked returns a releasing voice if any, else the oldest note.
+func (s *Synth) stealVoiceLocked() *Voice {
+	steal := s.voices[0]
+	for _, v := range s.voices[1:] {
+		if v.releasing != steal.releasing {
+			if v.releasing {
+				steal = v
+			}
+			continue
+		}
+		if v.seq < steal.seq {
+			steal = v
+		}
+	}
+	return steal
 }
 
 // NoteOff releases a note
@@ -247,6 +275,18 @@ func (s *Synth) AllNotesOff() {
 	}
 }
 
+// ChannelAllNotesOff releases every note on one MIDI channel (CC 123).
+func (s *Synth) ChannelAllNotesOff(channel uint8) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, v := range s.voices {
+		if v != nil && v.active && v.channel == channel {
+			v.releasing = true
+		}
+	}
+}
+
 // SetVolume sets the master volume (0.0 - 1.0)
 func (s *Synth) SetVolume(vol float64) {
 	s.mu.Lock()
@@ -260,14 +300,11 @@ func (s *Synth) SetVolume(vol float64) {
 	s.masterVolume = vol
 }
 
-// Close shuts down the synthesizer
+// Close stops audio output. Pause is used since oto v3.4 deprecated player.Close.
 func (s *Synth) Close() error {
-	s.mu.Lock()
-	s.running = false
-	s.mu.Unlock()
-
-	// Note: As of oto v3.4, player.Close() is deprecated and no longer needed.
-	// The player will be cleaned up when garbage collected.
+	if s.player != nil {
+		s.player.Pause()
+	}
 	return nil
 }
 

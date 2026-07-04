@@ -2,6 +2,7 @@
 package audio
 
 import (
+	"encoding/binary"
 	"math"
 	"sync"
 
@@ -147,13 +148,12 @@ func (r *synthReader) Read(buf []byte) (int, error) {
 
 		// Convert to 16-bit signed integer
 		sampleInt := int16(sample * 32767)
+		bits := uint16(sampleInt) //nolint:gosec // two's-complement bit reinterpretation for little-endian encoding
 
 		// Write stereo samples (same for L and R)
 		idx := i * channelCount * bitDepth
-		buf[idx] = byte(uint16(sampleInt))
-		buf[idx+1] = byte(uint16(sampleInt) >> 8)
-		buf[idx+2] = byte(uint16(sampleInt))
-		buf[idx+3] = byte(uint16(sampleInt) >> 8)
+		binary.LittleEndian.PutUint16(buf[idx:], bits)
+		binary.LittleEndian.PutUint16(buf[idx+2:], bits)
 	}
 
 	return len(buf), nil

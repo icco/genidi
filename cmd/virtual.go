@@ -44,19 +44,26 @@ func runVirtual(cmd *cobra.Command, args []string) {
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	m.program = p // Store reference so MIDI callback can send messages
 
-	// Handle graceful shutdown
+	// Route signals through cleanup so MIDI/audio resources are released.
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-c
-		p.Send(tea.Quit())
+		p.Send(shutdownMsg{})
 	}()
 
 	if _, err := p.Run(); err != nil {
-		fmt.Printf("Error running program: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)
 	}
+	// Alt screen is gone now; surface any shutdown errors.
+	if m.err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", m.err)
+	}
 }
+
+// shutdownMsg triggers resource cleanup and quit.
+type shutdownMsg struct{}
 
 const maxMessageHistory = 20
 
@@ -142,6 +149,14 @@ type initResultMsg struct {
 	err    error
 }
 
+// listenResultMsg carries listener state back to Update; setting it from the
+// command goroutine would race with Update/View.
+type listenResultMsg struct {
+	stop     func()
+	portName string
+	err      error
+}
+
 func (m *virtualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -161,10 +176,22 @@ func (m *virtualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Start listening for MIDI messages
 		return m, m.listenMIDI
 
+	case listenResultMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.stopFunc = msg.stop
+		m.lastMessage = fmt.Sprintf("Listening on: %s", msg.portName)
+		return m, nil
+
 	case midiEventMsg:
 		m.handleMIDIEvent(msg)
 		m.messageCount++
 		return m, nil
+
+	case shutdownMsg:
+		return m, m.cleanup
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -234,9 +261,9 @@ func (m *virtualModel) listenMIDI() tea.Msg {
 			if len(data) >= 3 {
 				controller := data[1]
 				value := data[2]
-				// Handle all notes off (CC 123)
+				// All notes off (CC 123) is per-channel
 				if controller == 123 && m.synth != nil {
-					m.synth.AllNotesOff()
+					m.synth.ChannelAllNotesOff(channel)
 				}
 				// Send message to update UI
 				if m.program != nil {
@@ -259,13 +286,10 @@ func (m *virtualModel) listenMIDI() tea.Msg {
 	}, drivers.ListenConfig{})
 
 	if err != nil {
-		m.err = fmt.Errorf("failed to listen to MIDI port: %w", err)
-		return nil
+		return listenResultMsg{err: fmt.Errorf("failed to listen to MIDI port: %w", err)}
 	}
 
-	m.stopFunc = stop
-	m.lastMessage = fmt.Sprintf("Listening on: %s", m.inPort.String())
-	return nil
+	return listenResultMsg{stop: stop, portName: m.inPort.String()}
 }
 
 func (m *virtualModel) handleMIDIEvent(msg midiEventMsg) {
@@ -295,9 +319,14 @@ func (m *virtualModel) handleMIDIEvent(msg midiEventMsg) {
 	case "cc":
 		message = fmt.Sprintf("CC:       Ch%d ctrl:%d val:%d",
 			msg.channel+1, msg.controller, msg.value)
-		// Handle all notes off (CC 123)
+		// CC 123: clear only this channel's notes
 		if msg.controller == 123 {
-			m.activeNotes = make(map[string]noteDisplay)
+			prefix := fmt.Sprintf("%d:", msg.channel)
+			for k := range m.activeNotes {
+				if strings.HasPrefix(k, prefix) {
+					delete(m.activeNotes, k)
+				}
+			}
 		}
 	case "pitchBend":
 		message = fmt.Sprintf("Pitch Bend: Ch%d", msg.channel+1)

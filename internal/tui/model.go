@@ -1,11 +1,12 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -27,8 +28,10 @@ const (
 	keyRight = "right"
 )
 
-// tickMsg is used for playback animation timing
-type tickMsg time.Time
+// tickMsg drives playback; gen lets stale ticks from a previous start be dropped.
+type tickMsg struct {
+	gen int
+}
 
 // Model represents the application state
 type model struct {
@@ -152,6 +155,39 @@ func (fb *fileBrowserModel) adjustViewportBounds() {
 	}
 }
 
+// clampViewport keeps the cursor visible within maxVisible rows.
+func (fb *fileBrowserModel) clampViewport(maxVisible int) {
+	if fb.cursor >= fb.viewportTop+maxVisible {
+		fb.viewportTop = fb.cursor - maxVisible + 1
+	}
+	if fb.viewportTop > fb.cursor {
+		fb.viewportTop = fb.cursor
+	}
+	if fb.viewportTop < 0 {
+		fb.viewportTop = 0
+	}
+}
+
+// maxVisibleLines is the number of file rows that fit after 9 lines of chrome.
+func (m model) maxVisibleLines() int {
+	lines := m.height - 9
+	if lines < 5 {
+		lines = 5
+	}
+	return lines
+}
+
+// uniqueSequencePath returns a new-sequence path in dir that doesn't exist yet.
+func uniqueSequencePath(dir string) string {
+	path := filepath.Join(dir, "new_sequence.mid")
+	for i := 2; ; i++ {
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+			return path
+		}
+		path = filepath.Join(dir, fmt.Sprintf("new_sequence_%d.mid", i))
+	}
+}
+
 func (m model) Init() tea.Cmd {
 	return nil
 }
@@ -161,11 +197,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.fileBrowser.clampViewport(m.maxVisibleLines())
 		return m, nil
 
 	case tickMsg:
-		// Handle playback tick - only process when playing
-		if m.sequencer.isPlaying && m.mode == sequencerMode {
+		// Only process ticks for the current chain; a stale tick doubles speed
+		if m.sequencer.isPlaying && m.mode == sequencerMode && msg.gen == m.sequencer.tickGen {
 			// Save previous step and advance immediately (so visual updates as early as possible)
 			prevStep := m.sequencer.currentStep
 			m.sequencer.currentStep = (m.sequencer.currentStep + 1) % numSteps
@@ -188,7 +225,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			// Schedule next tick
-			return m, tickWithBPM(m.sequencer.bpm)
+			return m, tickWithBPM(m.sequencer.bpm, msg.gen)
 		}
 		return m, nil
 
@@ -206,8 +243,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if !m.sequencer.selectingPort {
 				// Return to file browser from sequencer
 				m.mode = fileBrowserMode
-				m.sequencer.isPlaying = false
-				m.sequencer.sendAllNotesOff()
+				if m.sequencer.isPlaying {
+					m.sequencer.isPlaying = false
+					m.sequencer.stopPlayback()
+				} else {
+					m.sequencer.sendAllNotesOff()
+				}
 				return m, nil
 			}
 		}
@@ -239,14 +280,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyDown, "j":
 		if fb.cursor < len(fb.files)-1 {
 			fb.cursor++
-			// Scroll down if cursor moves below viewport
-			maxVisibleLines := m.height - 9
-			if maxVisibleLines < 5 {
-				maxVisibleLines = 5
-			}
-			if fb.cursor >= fb.viewportTop+maxVisibleLines {
-				fb.viewportTop = fb.cursor - maxVisibleLines + 1
-			}
+			fb.clampViewport(m.maxVisibleLines())
 		}
 	case "enter":
 		if len(fb.files) == 0 {
@@ -271,7 +305,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "n":
 		// Create new MIDI file
-		newPath := filepath.Join(fb.currentDir, "new_sequence.mid")
+		newPath := uniqueSequencePath(fb.currentDir)
 		err := m.sequencer.createNewMIDI(newPath)
 		if err != nil {
 			fb.message = fmt.Sprintf("Error creating MIDI: %v", err)
@@ -303,16 +337,9 @@ func (m model) viewFileBrowser() string {
 	if len(fb.files) == 0 {
 		s += "No MIDI files or directories found.\n"
 	} else {
-		// Calculate visible range based on terminal height
-		// Reserve space for: title(3), dir(1), blank(1), message(2), help(2) = 9 lines
-		maxVisibleLines := m.height - 9
-		if maxVisibleLines < 5 {
-			maxVisibleLines = 5 // Minimum visible lines
-		}
-
 		// Calculate viewport range
 		start := fb.viewportTop
-		end := start + maxVisibleLines
+		end := start + m.maxVisibleLines()
 		if end > len(fb.files) {
 			end = len(fb.files)
 		}

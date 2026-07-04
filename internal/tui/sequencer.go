@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"math"
 	"path/filepath"
 	"strings"
 	"time"
@@ -22,6 +25,9 @@ const (
 	minMIDINote         = 0   // Minimum MIDI note value
 	maxMIDINote         = 127 // Maximum MIDI note value
 	notesPerOctave      = 12  // Number of notes in an octave
+	minBPM              = 20
+	maxBPM              = 300
+	defaultBPM          = 120
 )
 
 // sequencerModel manages the MIDI sequencer state
@@ -34,6 +40,7 @@ type sequencerModel struct {
 	cursorY     int                         // Current channel
 	isPlaying   bool
 	currentStep int
+	tickGen     int // current tick chain; stale ticks are dropped
 	message     string
 
 	// MIDI output
@@ -160,7 +167,7 @@ func (s *sequencerModel) stopPlayback() {
 
 func (s *sequencerModel) createNewMIDI(path string) error {
 	s.filePath = path
-	s.bpm = 120
+	s.bpm = defaultBPM
 	s.cursorX = 0
 	s.cursorY = 0
 	s.isPlaying = false
@@ -186,7 +193,7 @@ func (s *sequencerModel) createNewMIDI(path string) error {
 
 func (s *sequencerModel) loadMIDI(path string) error {
 	s.filePath = path
-	s.bpm = 120
+	s.bpm = defaultBPM
 	s.cursorX = 0
 	s.cursorY = 0
 	s.isPlaying = false
@@ -210,19 +217,24 @@ func (s *sequencerModel) loadMIDI(path string) error {
 	// Try to parse existing MIDI file
 	rd, err := smf.ReadFile(path)
 	if err != nil {
-		// If file doesn't exist, create a new one
-		return s.saveMIDI()
+		// Create a new file only if missing; never overwrite a corrupt file.
+		if errors.Is(err, fs.ErrNotExist) {
+			return s.saveMIDI()
+		}
+		return fmt.Errorf("error reading MIDI file: %w", err)
 	}
 
 	// Extract tempo if available
 	tempoChanges := rd.TempoChanges()
 	if len(tempoChanges) > 0 {
-		s.bpm = int(tempoChanges[0].BPM)
+		s.bpm = clampBPM(tempoChanges[0].BPM)
 	}
 
-	// Parse tracks to extract note data
-	// Calculate ticks per step (one bar = 4 beats = 16 steps)
-	ticksPerStep := uint32(ticksPerQuarterNote / 4) // 240 ticks per step
+	// One step is a 16th note; use the file's resolution, not our default.
+	ticksPerStep := uint32(ticksPerQuarterNote / 4)
+	if mt, ok := rd.TimeFormat.(smf.MetricTicks); ok && mt.Ticks16th() > 0 {
+		ticksPerStep = mt.Ticks16th()
+	}
 
 	// Map notes by each message's channel, not track position, so any
 	// track layout works (format 0 or one track per channel).
@@ -333,7 +345,7 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			s.selectingPort = false
-		case "escape", "q", "o":
+		case "esc", "q", "o":
 			s.selectingPort = false
 		case "r":
 			// Refresh ports list
@@ -368,7 +380,7 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "+", "=":
 		// Increase BPM
-		if s.bpm < 300 {
+		if s.bpm < maxBPM {
 			s.bpm += 5
 			if err := s.saveMIDI(); err != nil {
 				s.message = fmt.Sprintf("Error saving: %v", err)
@@ -376,7 +388,7 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "-", "_":
 		// Decrease BPM
-		if s.bpm > 20 {
+		if s.bpm > minBPM {
 			s.bpm -= 5
 			if err := s.saveMIDI(); err != nil {
 				s.message = fmt.Sprintf("Error saving: %v", err)
@@ -384,7 +396,7 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "w":
 		// Increase note for current step
-		if s.notes[s.cursorY][s.cursorX] < 127 {
+		if s.notes[s.cursorY][s.cursorX] < maxMIDINote {
 			s.notes[s.cursorY][s.cursorX]++
 			if err := s.saveMIDI(); err != nil {
 				s.message = fmt.Sprintf("Error saving: %v", err)
@@ -392,7 +404,7 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "s":
 		// Decrease note for current step
-		if s.notes[s.cursorY][s.cursorX] > 0 {
+		if s.notes[s.cursorY][s.cursorX] > minMIDINote {
 			s.notes[s.cursorY][s.cursorX]--
 			if err := s.saveMIDI(); err != nil {
 				s.message = fmt.Sprintf("Error saving: %v", err)
@@ -403,13 +415,14 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		s.isPlaying = !s.isPlaying
 		if s.isPlaying {
 			s.currentStep = 0
+			s.tickGen++ // invalidate in-flight ticks
 			// Play notes at step 0 immediately
 			for ch := 0; ch < numChannels; ch++ {
 				if s.steps[ch][0] {
 					s.sendNoteOn(uint8(ch), uint8(s.notes[ch][0]), 100) //nolint:gosec
 				}
 			}
-			return m, tickWithBPM(s.bpm)
+			return m, tickWithBPM(s.bpm, s.tickGen)
 		} else {
 			// Stop playback - send note offs for currently playing step and reset state
 			s.stopPlayback()
@@ -436,13 +449,18 @@ func (m model) updateSequencer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func tickWithBPM(bpm int) tea.Cmd {
-	// Calculate step interval based on BPM
-	// BPM = beats per minute, 16 steps = 4 beats (16th notes)
-	// So each step = (60000ms / BPM) / 4
-	stepIntervalMs := 60000 / bpm / 4
-	return tea.Tick(time.Millisecond*time.Duration(stepIntervalMs), func(t time.Time) tea.Msg {
-		return tickMsg(t)
+// stepInterval returns the duration of one 16th-note step at the given tempo.
+func stepInterval(bpm int) time.Duration {
+	if bpm <= 0 {
+		bpm = defaultBPM
+	}
+	// 16 steps = 4 beats, so each step is a quarter of a beat.
+	return time.Minute / time.Duration(bpm) / 4
+}
+
+func tickWithBPM(bpm, gen int) tea.Cmd {
+	return tea.Tick(stepInterval(bpm), func(time.Time) tea.Msg {
+		return tickMsg{gen: gen}
 	})
 }
 
@@ -589,7 +607,19 @@ func (m model) viewPortSelection() string {
 
 func midiNoteToName(note int) string {
 	notes := []string{"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
-	octave := (note / 12) - 1
-	noteName := notes[note%12]
+	octave := (note / notesPerOctave) - 1
+	noteName := notes[note%notesPerOctave]
 	return fmt.Sprintf("%s%d", noteName, octave)
+}
+
+// clampBPM clamps a file tempo to range; 0/Inf/NaN would break tick scheduling.
+func clampBPM(bpm float64) int {
+	switch {
+	case !(bpm >= minBPM): // negated comparison also catches NaN
+		return minBPM
+	case bpm > maxBPM:
+		return maxBPM
+	default:
+		return int(math.Round(bpm))
+	}
 }

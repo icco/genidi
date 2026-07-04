@@ -224,9 +224,8 @@ func (s *sequencerModel) loadMIDI(path string) error {
 	// Calculate ticks per step (one bar = 4 beats = 16 steps)
 	ticksPerStep := uint32(ticksPerQuarterNote / 4) // 240 ticks per step
 
-	// Map notes by the MIDI channel embedded in each message rather than by
-	// track position, so any track layout works: format 0 single-track files,
-	// one track per channel, or anything in between.
+	// Map notes by each message's channel, not track position, so any
+	// track layout works (format 0 or one track per channel).
 	for _, track := range rd.Tracks {
 		var currentTick uint32
 		for _, msg := range track {
@@ -260,7 +259,7 @@ func (s *sequencerModel) saveMIDI() error {
 	// Calculate ticks per step (one bar = 4 beats = 16 steps)
 	ticksPerStep := uint32(ticksPerQuarterNote / 4) // 240 ticks per step
 
-	// Track 0: Tempo track. Named after the file so DAWs display a sequence name.
+	// Track 0: tempo track, named after the file so DAWs show a sequence name
 	sequenceName := strings.TrimSuffix(filepath.Base(s.filePath), filepath.Ext(s.filePath))
 	var track0 smf.Track
 	track0.Add(0, smf.MetaTrackSequenceName(sequenceName))
@@ -490,7 +489,7 @@ func (m model) viewSequencer() string {
 		if ch == s.cursorY {
 			b.WriteString(selectedStyle.Render(fmt.Sprintf("Ch %-5d", ch+1)))
 		} else {
-			b.WriteString(fmt.Sprintf("Ch %-5d", ch+1))
+			fmt.Fprintf(&b, "Ch %-5d", ch+1)
 		}
 
 		// Note display for current cursor position (5 chars wide to match "Note  ")
@@ -498,7 +497,7 @@ func (m model) viewSequencer() string {
 		if ch == s.cursorY {
 			b.WriteString(selectedStyle.Render(fmt.Sprintf("%-5s ", noteName)))
 		} else {
-			b.WriteString(fmt.Sprintf("%-5s ", noteName))
+			fmt.Fprintf(&b, "%-5s ", noteName)
 		}
 
 		// Steps (3 chars wide per step)
@@ -573,7 +572,7 @@ func (m model) viewPortSelection() string {
 			if i == s.selectedOut {
 				b.WriteString(selectedStyle.Render(fmt.Sprintf("%s%s%s\n", cursor, name, connected)))
 			} else {
-				b.WriteString(fmt.Sprintf("%s%s%s\n", cursor, name, connected))
+				fmt.Fprintf(&b, "%s%s%s\n", cursor, name, connected)
 			}
 		}
 	}

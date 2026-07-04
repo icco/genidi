@@ -8,8 +8,8 @@ import (
 	"gitlab.com/gomidi/midi/v2/smf"
 )
 
-// writeSingleTrackMIDI writes a format-0 style file: one track containing
-// tempo/meter meta events plus notes on the given channels, one note per step.
+// writeSingleTrackMIDI writes a format-0 style file: one track with tempo
+// meta events plus one note per step on the given channels.
 func writeSingleTrackMIDI(t *testing.T, path string, channels []uint8) {
 	t.Helper()
 
@@ -46,7 +46,7 @@ func TestLoadMIDIMapsNotesByChannel(t *testing.T) {
 		t.Fatalf("loading MIDI: %v", err)
 	}
 
-	// The note sent on MIDI channel ch sits at step ch; it must land on row ch.
+	// The note on MIDI channel ch sits at step ch and must land on row ch.
 	for ch := 0; ch < 4; ch++ {
 		if !s.steps[ch][ch] {
 			t.Errorf("note on MIDI channel %d did not land on row %d at step %d", ch, ch, ch)
@@ -69,8 +69,7 @@ func TestLoadMIDIIgnoresOutOfRangeChannels(t *testing.T) {
 	if !s.steps[0][0] {
 		t.Errorf("note on channel 0 should still load onto row 0")
 	}
-	// Notes on channels 9 and 15 don't fit the 4-row grid; they must be
-	// dropped without landing on some other row.
+	// Channels 9 and 15 don't fit the 4-row grid and must be dropped.
 	for ch := 1; ch < numChannels; ch++ {
 		for step := 0; step < numSteps; step++ {
 			if s.steps[ch][step] {

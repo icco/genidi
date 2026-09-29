@@ -17,7 +17,7 @@ A TUI (Terminal User Interface) MIDI generator and sequencer built with [Bubblet
 ## Installation
 
 ```bash
-go install github.com/icco/genidi@latest
+go install go.icco.me/genidi@latest
 ```
 
 Or build from source:

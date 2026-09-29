@@ -5,8 +5,8 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/icco/genidi/internal/tui"
 	"github.com/spf13/cobra"
+	"go.icco.me/genidi/internal/tui"
 )
 
 var manualCmd = &cobra.Command{

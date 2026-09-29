@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/icco/genidi/cmd"
+	"go.icco.me/genidi/cmd"
 )
 
 func main() {

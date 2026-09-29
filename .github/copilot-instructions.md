@@ -8,7 +8,7 @@ genidi is a Go project maintained by @icco. The repository uses Go 1.25.x and fo
 
 - **Language**: Go 1.25.x
 - **Package Manager**: Go modules (`go.mod`)
-- **Module Path**: `github.com/icco/genidi`
+- **Module Path**: `go.icco.me/genidi`
 
 ## Build and Test Commands
 

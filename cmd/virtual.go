@@ -10,10 +10,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/icco/genidi/internal/audio"
 	"github.com/spf13/cobra"
 	"gitlab.com/gomidi/midi/v2/drivers"
 	"gitlab.com/gomidi/midi/v2/drivers/rtmididrv"
+	"go.icco.me/genidi/internal/audio"
 )
 
 var (

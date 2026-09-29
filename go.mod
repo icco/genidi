@@ -1,4 +1,4 @@
-module github.com/icco/genidi
+module go.icco.me/genidi
 
 go 1.25.0
 
